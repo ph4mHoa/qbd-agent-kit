@@ -1,0 +1,15 @@
+{
+  "name": "qbd-agent-kit",
+  "description": "Agent Kit for QuickBooks Desktop: agent skills for the qbd command line",
+  "owner": {
+    "name": "Pham Hoa",
+    "url": "https://github.com/ph4mHoa"
+  },
+  "plugins": [
+    {
+      "name": "qbd-agent-kit",
+      "source": "./",
+      "description": "Agent skills for QuickBooks Desktop through the qbd command line, run on the Windows PC that hosts QuickBooks"
+    }
+  ]
+}

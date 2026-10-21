@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "qbd-agent-kit"
+dynamic = ["version"]
+description = "QuickBooks Desktop for AI agents: a command line that runs on the Windows PC that hosts QuickBooks, with merchant workflows (daily brief, collections, bills, cash, reorder, duplicates, month-end checks) and agent skills. No Web Connector, no cloud."
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Pham Hoa" }]
+requires-python = ">=3.10"
+dependencies = ['pywin32>=306; sys_platform == "win32"']
+keywords = ["quickbooks", "quickbooks-desktop", "qbxml", "ai-agents", "claude", "cli", "accounting", "bookkeeping"]
+classifiers = [
+    "Environment :: Console",
+    "Intended Audience :: Financial and Insurance Industry",
+    "Operating System :: Microsoft :: Windows",
+    "Programming Language :: Python :: 3",
+    "Topic :: Office/Business :: Financial :: Accounting",
+]
+
+[project.urls]
+Homepage = "https://github.com/ph4mHoa/qbd-agent-kit"
+Issues = "https://github.com/ph4mHoa/qbd-agent-kit/issues"
+
+[project.scripts]
+qbd = "qbd_agent_kit.cli:main"
+
+[tool.setuptools.dynamic]
+version = { attr = "qbd_agent_kit.__version__" }
+
+[tool.setuptools.package-data]
+qbd_agent_kit = ["qbxml/schema.json"]
