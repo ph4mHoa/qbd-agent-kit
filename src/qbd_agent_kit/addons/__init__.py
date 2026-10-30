@@ -503,7 +503,8 @@ def set_start_at_sign_in(addon_id: str, on: bool, *args: str) -> None:
         return
     import winreg
 
-    with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY, 0, winreg.KEY_SET_VALUE) as k:
+    # CreateKeyEx, not OpenKey: a Windows user who never had anything start at sign-in may have no Run key yet.
+    with winreg.CreateKeyEx(winreg.HKEY_CURRENT_USER, RUN_KEY, 0, winreg.KEY_SET_VALUE) as k:
         if on:
             winreg.SetValueEx(k, _run_value(addon_id), 0, winreg.REG_SZ, subprocess.list2cmdline(command(addon_id, *args)))
         else:
