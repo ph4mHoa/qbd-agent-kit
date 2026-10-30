@@ -125,6 +125,32 @@ class Bridge(unittest.TestCase):
         # QuickBooks Enterprise 24, where a worker-only set-up and this one both reached QuickBooks.
         self.assertEqual(sys.coinit_flags, 0)
 
+    def worker_steps(self, desktop: str) -> list[str]:
+        """What the worker does before its first SDK call when it starts on the named desktop."""
+        steps: list[str] = []
+        default = types.SimpleNamespace(SetThreadDesktop=lambda: steps.append("SetThreadDesktop"))
+        modules = {
+            "pythoncom": types.SimpleNamespace(CoInitialize=lambda: steps.append("CoInitialize"), CoUninitialize=lambda: None),
+            "win32api": types.SimpleNamespace(GetCurrentThreadId=lambda: 1),
+            "win32con": types.SimpleNamespace(UOI_NAME=2, MAXIMUM_ALLOWED=0x2000000),
+            "win32service": types.SimpleNamespace(
+                GetThreadDesktop=lambda thread: desktop,
+                GetUserObjectInformation=lambda handle, index: handle,
+                OpenDesktop=lambda name, flags, inherit, access: {"Default": default}[name],
+            ),
+        }
+        with mock.patch.dict(sys.modules, modules):
+            t = ComTransport("", "qbd test", "", open_timeout=5, timeout=0.3)
+            t.open()
+            t.close()
+        return steps
+
+    def test_a_worker_on_another_desktop_moves_to_the_default_one_before_it_joins_com(self):
+        # From another desktop the SDK answered "Could not start QuickBooks" while QuickBooks was open: found on
+        # Windows 10 with QuickBooks Enterprise 24, where agy runs commands on a desktop of its own.
+        self.assertEqual(self.worker_steps("agent"), ["SetThreadDesktop", "CoInitialize"])
+        self.assertEqual(self.worker_steps("Default"), ["CoInitialize"])
+
     def test_com_error_without_exception_info(self):
         e = com_error(ComError(-2147221005, "Invalid class string", None, None))
         self.assertEqual(e.code, "0x800401F3")

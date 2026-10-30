@@ -5,7 +5,7 @@ Every command prints one line of JSON (add `--pretty` to indent it, `--out FILE`
 takes `--demo` to run against the built-in sample company instead of QuickBooks.
 
 ```
-qbd 0.2.0: QuickBooks Desktop for AI agents, run on the Windows PC that hosts QuickBooks.
+qbd 0.3.0: QuickBooks Desktop for AI agents, run on the Windows PC that hosts QuickBooks.
 
 Usage: qbd <command> [arguments] [options]
 
@@ -52,6 +52,8 @@ Records
 The QuickBooks PC
   qbd file-health             Company file and QuickBooks PC health
   qbd web-connector           Web Connector apps and their errors
+  qbd activity                What the AI did: a page to check it
+  qbd addons [<action>] [<addon>]  Add-ons: list, install, start or remove one
 
 Changes (when QBD_ALLOW_WRITES=true)
   qbd draft <action> <type>   Draft a change to QuickBooks
@@ -126,6 +128,7 @@ can be larger.
   --customer TEXT            Only this customer (full name)
   --top N                    How many customers to list; 1 to 100; default 15
   --invoices-per-customer N  0 to 50; default 5
+  --open                     Also draw it as a page and open it in the web browser
 ```
 
 ### qbd match-payment
@@ -209,6 +212,7 @@ not entered as bills.
 
   --days-ahead N              7 to 90; default 30
   --count-overdue-receivables Assume overdue invoices are paid in the first week
+  --open                      Also draw it as a page and open it in the web browser
 ```
 
 ### qbd reorder
@@ -859,6 +863,41 @@ Connector's log (QWCLog.txt), with what the error codes mean and what to do. Use
 stopped, shows an error, or before calling the app's support.
 ```
 
+### qbd activity
+
+```
+Usage: qbd activity [options]
+
+What the AI did: a page to check it.
+Everything run through qbd on this PC in the last days: each command an agent or person ran (what
+was asked, how long it took, how many records QuickBooks sent back, what went wrong) and each change
+saved or tried. Writes a page any web browser opens, for the person who checks the agent's work, and
+returns the newest entries as JSON. Run it with --open when the person asks what you did, or at the
+end of a session.
+
+  --days N   How many days the page covers; 1 to 90; default 7
+  --limit N  How many commands and changes the JSON answer lists; 1 to 500; default 20
+  --open     Open the page in the web browser
+```
+
+### qbd addons
+
+```
+Usage: qbd addons [<action>] [<addon>] [options]
+
+Add-ons: list, install, start or remove one.
+Programs a person can add to qbd on this PC, such as the Activity Monitor: a window that shows what
+assistants do in QuickBooks and lets the person approve their changes. list shows qbd's catalog and
+what is installed. install takes a name from the catalog, downloaded and checked against the SHA-256
+the catalog names, or the path of a downloaded .zip; add-ons outside the catalog install only where
+an administrator allows them. Without --yes, install and remove only say what they would do. Install
+or remove an add-on only when the person asks.
+
+  <action>  What to do; one of: list, install, run, remove; default list
+  <addon>   The add-on: its name in the catalog, or the path of a downloaded .zip to install
+  --yes     Install or remove it; without this, only say what would happen
+```
+
 ## Changes (when QBD_ALLOW_WRITES=true)
 
 ### qbd draft
@@ -934,14 +973,19 @@ after the person approves.
 ### qbd commit
 
 ```
-Usage: qbd commit <token>
+Usage: qbd commit <token> [options]
 
 Save an approved draft to QuickBooks.
 Send a change prepared by qbd draft, or a batch prepared by qbd import, to QuickBooks. Only run this
 after the person has seen the preview and said yes. Each token works once and expires after 15
-minutes.
+minutes. When the person answered the draft in the Activity Monitor, this returns what they decided:
+what was saved, or that they rejected it.
 
-  <token>  The token from qbd draft or qbd import; required
+  <token>               The token from qbd draft or qbd import; required
+  --approved-in CHOICE  Where the person approved it; the Activity Monitor sets monitor when they
+                        approve it there; one of: chat, monitor; default chat
+  --seen TEXT           The draft's fingerprint as the person saw it. The Activity Monitor sends it,
+                        so that a draft changed after it was shown is not saved
 ```
 
 ### qbd undo

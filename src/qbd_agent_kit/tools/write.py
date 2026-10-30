@@ -19,14 +19,21 @@ from ..qb.dates import add_days, days_between
 from ..qbxml.build import LIST_ID, build_request
 from ..qbxml.parse import parse_responses
 from ..qbxml.schema import Model, enums, has_message, is_model, message_model, model
-from ..safety.audit import committed, read_audit, write_audit
+from ..config import Config
+from ..safety.audit import _now, committed, read_audit, who_am_i, write_audit
 from ..safety.privacy import mask_personal_data
 from .args import Arg, parse_args
-from .common import Ctx, Draft, company_facts, tool
+from .common import Ctx, Draft, Drafts, company_facts, tool
 
 WRITABLE = tuple(e.key for e in entities() if has_message(f"{e.base}AddRq") or has_message(f"{e.base}ModRq"))
 TOKEN_MINUTES = 15
 NOT_KEPT = "(personal data, not kept)"
+
+
+def asked_by(c: Config) -> dict[str, Any]:
+    """Who drafts a change and with which settings, kept with the draft for the Activity Monitor."""
+    return {"created": time.time(), "agent": c.agent, "session": c.session, "session_title": c.session_title,
+            "program": c.program, "settings": c.settings()}
 
 
 def _arr(v: Any) -> list:
@@ -96,7 +103,8 @@ def _rows(ctx: Ctx, message: str, body: dict, limit: int) -> list[dict]:
         return []
 
 
-def check_refs(ctx: Ctx, fields: dict) -> list[str]:
+def names_in(fields: dict) -> list[tuple[str, str]]:
+    """The names a change refers to, each with the list it must be in: [("CustomerQueryRq", "Acme Ltd"), ...]."""
     wanted: dict[str, tuple[str, str]] = {}
 
     def walk(v: Any) -> None:
@@ -115,9 +123,26 @@ def check_refs(ctx: Ctx, fields: dict) -> list[str]:
                         walk(val)
 
     walk(fields)
+    return list(wanted.values())
+
+
+NAME_KINDS = {"CustomerQueryRq": "customer", "VendorQueryRq": "vendor", "ItemQueryRq": "item", "AccountQueryRq": "account",
+              "ClassQueryRq": "class", "TermsQueryRq": "terms", "PaymentMethodQueryRq": "payment method",
+              "ShipMethodQueryRq": "shipping method", "SalesTaxCodeQueryRq": "tax code"}
+
+
+def names_exist(fields: dict) -> list[str]:
+    """The check that the names a change uses exist, in plain words, when it uses any."""
+    kinds = list(dict.fromkeys(NAME_KINDS.get(lst, "other") for lst, _ in names_in(fields)))
+    if not kinds:
+        return []
+    return [f"The {' and '.join([', '.join(kinds[:-1]), kinds[-1]] if len(kinds) > 1 else kinds)} name{'s' if len(names_in(fields)) > 1 else ''} it uses exist"]
+
+
+def check_refs(ctx: Ctx, fields: dict) -> list[str]:
     problems = []
     seen = ctx.cache.get("refs")  # names already found during one qbd import
-    for lst, name in wanted.values():
+    for lst, name in names_in(fields):
         if seen is not None and f"{lst}|{name.lower()}" in seen:
             continue
         if _rows(ctx, lst, {"ListID": name} if LIST_ID.match(name) else {"FullName": name}, 1):
@@ -394,14 +419,19 @@ def draft(ctx: Ctx, a: dict) -> dict:
     today = ctx.today()
     fields = dict(a["fields"])
     warnings: list[str] = []
+    checks: list[str] = []  # what it passed, for the person who approves it in the Activity Monitor
     source = a["source"].strip() if truthy(a["source"]) else MISSING
     if source is not MISSING and not a["allow_duplicate"]:
         refuse_saved_source(ctx, host.company_file, source)
+        checks.append("Not saved before from the same source")
     before = MISSING
+    total: Any = MISSING
 
     def closed(d: Any, what: str) -> None:
         if facts.closing_date and isinstance(d, str) and d <= facts.closing_date:
             raise ToolError(f"{what} is dated {d}, on or before the closing date {facts.closing_date}. Closed periods are not changed from here.")
+        if facts.closing_date and isinstance(d, str):
+            checks.append(f"Dated after the closing date, {facts.closing_date}")
 
     action = a["action"]
     existing = None if action == "add" else find_existing(ctx, e, a["id"], nz(a["name"], get(fields, "Name") if action == "upsert" else MISSING))
@@ -420,21 +450,27 @@ def draft(ctx: Ctx, a: dict) -> dict:
         message = f"{e.base}AddRq"
         if not has_message(message):
             raise ToolError(f"QuickBooks cannot add {e.key} records through the SDK.")
+        if e.base == "Check" and truthy(get(fields, "RefNumber")) and "IsToBePrinted" not in fields:
+            fields["IsToBePrinted"] = False  # else QuickBooks can mark it to be printed and drop the number
         request = build_request(message, {f"{e.base}Add": fields}, {"requestID": token})
         problems = check_refs(ctx, fields)
         if problems:
             raise ToolError("Fix these before drafting:\n- " + "\n- ".join(problems))
+        checks += names_exist(fields)
         if e.kind == "list":
             name = text(nz(get(fields, "Name"), ""))
             same = find_existing(ctx, e, MISSING, name)
             if same is not None and not a["allow_duplicate"]:
                 raise ToolError(f'A {e.key} named "{name}" already exists (ListID {text(get(same, "ListID"))}). Use action update or upsert.')
+            if same is None:
+                checks.append(f'No {noun(e)} named "{name}" yet')
             summary = [f'Add {noun(e)} "{name}"', *(f"- {k}: {safe(k, v)}" for k, v in fields.items() if k != "Name")]
         else:
             lines, total, about, more = txn_preview(ctx, e, fields)
             warnings += more
             if total > c.max_amount:
                 raise ToolError(f"The total {fmt(total)} is above the limit of {fmt(c.max_amount)} (QBD_MAX_AMOUNT).")
+            checks.append(f"Under the limit for changes, {fmt(c.max_amount)}")
             txn_date = nz(get(fields, "TxnDate"), today)
             closed(txn_date, "This transaction")
             if days_between(today, txn_date) > 31:
@@ -453,9 +489,13 @@ def draft(ctx: Ctx, a: dict) -> dict:
                         f"{text(party)} already has a {e.key} #{text(ref)} (TxnID {text(get(same_ref, 'TxnID'))}, dated {text(get(same_ref, 'TxnDate'))}). "
                         "Set allow_duplicate if this is really a second one."
                     )
+                if truthy(ref) and same_ref is None:
+                    checks.append(f"Number {text(ref)} not used for {text(party)} within 30 days of its date")
                 same_amount = [r for r in around if amount_of(r) == total and abs(days_between(text(get(r, "TxnDate")), txn_date)) <= 3]
                 if same_amount:
                     warnings.append(f"Possible duplicate: {'; '.join(describe(e, r) for r in same_amount)}.")
+                else:
+                    checks.append(f"No other {noun(e)} for {text(party)} with the same amount within 3 days")
             skip = ("TxnDate", "RefNumber", "TotalAmount", "Amount", party_key, "LinkToTxnID", "AppliedToTxnAdd", "CashBackInfoAdd")
             for_party = f" for {text(party)}" if truthy(party) else ""
             number = f", number {text(fields['RefNumber'])}" if truthy(get(fields, "RefNumber")) else ""
@@ -487,9 +527,11 @@ def draft(ctx: Ctx, a: dict) -> dict:
             total = draft_total(fields)
             if total > c.max_amount:
                 raise ToolError(f"The new total {fmt(total)} is above the limit of {fmt(c.max_amount)} (QBD_MAX_AMOUNT).")
+            checks.append(f"Under the limit for changes, {fmt(c.max_amount)}")
         problems = check_refs(ctx, fields)
         if problems:
             raise ToolError("Fix these before drafting:\n- " + "\n- ".join(problems))
+        checks += names_exist(fields)
         request = build_request(message, {f"{e.base}Mod": {id_field: get(rec, id_field), "EditSequence": get(rec, "EditSequence"), **fields}}, {"requestID": token})
         before = {**{k: rec.get(k) for k in fields if not re.search(r"LineMod\Z", k)}, **({k: rec[k] for k in line_keys(rec)} if line_mods else {})}
 
@@ -526,11 +568,13 @@ def draft(ctx: Ctx, a: dict) -> dict:
                 warnings.append(f"It has a balance of {fmt(balance)}; QuickBooks refuses to delete names that are used in transactions.")
         summary = [f"{'Void' if action == 'void' else 'Delete'} {describe(e, rec)}"]
         before = rec
+        total = amount_of(rec) if e.kind == "txn" else MISSING
 
     ctx.drafts.put(Draft(
         token=token, action=action, entity=e.key, request=request, message=message, summary="\n".join(summary),
         reason=a["reason"], company_file=host.company_file, expires=time.time() + TOKEN_MINUTES * 60,
         source=source, allow_duplicate=a["allow_duplicate"], before=as_logged(before),
+        total=total, warnings=warnings, checks=list(dict.fromkeys(checks)), **asked_by(c),
     ))
     return {
         "token": token,
@@ -718,8 +762,10 @@ def import_csv(ctx: Ctx, a: dict) -> dict:
             *(f"- {r['preview'].splitlines()[0]}" for r in ready[:50]),
             *([f"- and {len(ready) - 50} more"] if len(ready) > 50 else []),
         ])
+        warned = [f"{nz(r.get('ref'), r.get('name'), 'rows ' + r['rows'])}: {w}" for r in ready for w in r.get("warnings", [])]
         ctx.drafts.put(Draft(token=token, action="batch", entity=e.key, request=dumps([r["token"] for r in ready]), message="batch",
-                             summary=preview, reason=a["reason"], company_file=host.company_file, expires=time.time() + TOKEN_MINUTES * 60))
+                             summary=preview, reason=a["reason"], company_file=host.company_file, expires=time.time() + TOKEN_MINUTES * 60,
+                             warnings=warned[:20], **asked_by(ctx.config)))
         out.update({"token": token, "expires_in_minutes": TOKEN_MINUTES, "preview": preview, "company": company_facts(ctx).name})
     out.update({
         "ready": [{k: v for k, v in r.items() if k != "token"} for r in ready[:50]],
@@ -732,7 +778,13 @@ def import_csv(ctx: Ctx, a: dict) -> dict:
     return out
 
 
-def save(ctx: Ctx, d: Draft) -> dict:
+def asked(d: Draft) -> dict[str, Any]:
+    """Who asked for a draft, and its amount, as the write log keeps them."""
+    return {**{k: v for k, v in (("agent", d.agent), ("session", d.session), ("program", d.program)) if v},
+            **({"total": d.total} if d.total is not MISSING else {})}
+
+
+def save(ctx: Ctx, d: Draft, approved_in: str = "chat") -> dict:
     """Send one checked draft to QuickBooks and log what happened."""
     if time.time() > d.expires:
         raise ToolError("The draft expired. Draft the change again so it is checked against current data.")
@@ -743,7 +795,8 @@ def save(ctx: Ctx, d: Draft) -> dict:
         refuse_saved_source(ctx, d.company_file, d.source)  # another draft from the same source may have been saved since
     log = ctx.config.audit_log
     base = {"token": d.token, "companyFile": d.company_file, "action": d.action, "entity": d.entity, "summary": d.summary, "reason": d.reason,
-            "source": d.source, "before": d.before, "request": d.request}
+            "source": d.source, **asked(d), **({"approved_in": approved_in} if approved_in != "chat" else {}), "before": d.before,
+            "request": d.request}
     try:
         xml = ctx.qb.raw([d.request])
     except Exception as e:
@@ -770,23 +823,27 @@ def save(ctx: Ctx, d: Draft) -> dict:
     }
 
 
-def save_batch(ctx: Ctx, d: Draft) -> dict:
+def save_batch(ctx: Ctx, d: Draft, approved_in: str = "chat") -> dict:
     """Save the records of a qbd import one by one. A record QuickBooks refuses is reported and the rest go on; when
-    QuickBooks stops answering, nothing more is sent."""
+    QuickBooks stops answering, or a person stops it in the Activity Monitor, nothing more is sent."""
     if time.time() > d.expires:
         raise ToolError("The batch expired. Import the file again; the records saved from it are skipped.")
     results: list[dict] = []
     stop = ""
     for token in json.loads(d.request):
         child = ctx.drafts.take(token)
-        if child is None:
+        if child is None:  # every record is accounted for, even one whose draft is gone
+            results.append({"record": f"draft {token}", "outcome": "not_sent", "error": "Its draft is gone (it expired or was removed)"})
             continue
         record = child.summary.split("\n")[0]
+        asked_stop = ctx.live.stop_asked() if ctx.live is not None and not stop else None
+        if asked_stop is not None:
+            stop = f"Stopped by {asked_stop.get('by') or 'someone at this PC'} in the Activity Monitor; the records saved before stay saved"
         if stop:
             results.append({"record": record, "outcome": "not_sent"})
             continue
         try:
-            r = save(ctx, child)
+            r = save(ctx, child, approved_in)
             results.append({"record": record, "outcome": "done", "ids": r["ids"], "token": child.token, **({"warning": r["warning"]} if "warning" in r else {})})
         except (WriteUnconfirmed, QbConnectionError) as err:
             stop = str(err)
@@ -799,7 +856,7 @@ def save_batch(ctx: Ctx, d: Draft) -> dict:
         "type": d.entity,
         "counts": counts,
         "results": results,
-        **({"stopped": f"QuickBooks stopped answering, so the rest was not sent: {stop}"} if stop else {}),
+        **({"stopped": stop + "." if stop.startswith("Stopped by") else f"QuickBooks stopped answering, so the rest was not sent: {stop}"} if stop else {}),
         "next_step": "Each saved record can be undone with qbd undo and its token. Fix the failed rows and import the file again: "
                      "the saved ones are skipped." if len(results) > counts.get("done", 0) else "All records are saved.",
     }
@@ -809,16 +866,72 @@ def save_batch(ctx: Ctx, d: Draft) -> dict:
     "qb_commit",
     "Save an approved draft to QuickBooks",
     "Send a change prepared by qbd draft, or a batch prepared by qbd import, to QuickBooks. Only run this after the person "
-    "has seen the preview and said yes. Each token works once and expires after 15 minutes.",
-    {"token": Arg("str", "The token from qbd draft or qbd import", required=True)},
+    "has seen the preview and said yes. Each token works once and expires after 15 minutes. When the person answered the "
+    "draft in the Activity Monitor, this returns what they decided: what was saved, or that they rejected it.",
+    {
+        "token": Arg("str", "The token from qbd draft or qbd import", required=True),
+        "approved_in": Arg("enum", "Where the person approved it; the Activity Monitor sets monitor when they approve it there",
+                           default="chat", choices=("chat", "monitor")),
+        "seen": Arg("str", "The draft's fingerprint as the person saw it. The Activity Monitor sends it, so that a draft "
+                    "changed after it was shown is not saved"),
+    },
     writes=True,
     destructive=True,
 )
 def commit(ctx: Ctx, a: dict) -> dict:
+    in_monitor = a["approved_in"] == "monitor"
+    if ctx.config.require_monitor_approval and not in_monitor and ctx.drafts.answered(a["token"]) is None:
+        raise ToolError("On this PC, changes are approved in the Activity Monitor (QBD_REQUIRE_MONITOR_APPROVAL). The draft waits "
+                        "there: tell the person it is ready, then run qbd commit again. Once they have approved it, that returns "
+                        "what was saved.")
+    if a["seen"] is not MISSING and (now := ctx.drafts.fingerprint(a["token"])) is not None and now != a["seen"]:
+        raise ToolError("The draft changed after it was shown, so it was not saved. Look at it again before approving it.")
     d = ctx.drafts.take(a["token"])
     if d is None:
+        return answered(ctx.drafts, a["token"])
+    if ctx.live is not None and d.action != "batch":
+        ctx.live.stoppable = False  # one change is sent whole: there is no step after which to stop
+        ctx.live.update(stoppable=False)
+    try:
+        out = save_batch(ctx, d, a["approved_in"]) if d.action == "batch" else save(ctx, d, a["approved_in"])
+    except (ToolError, QbStatusError, WriteUnconfirmed, QbConnectionError) as e:
+        if in_monitor:
+            ctx.drafts.answer(d.token, {"approved_in": "monitor", "by": who_am_i(), "at": _now(), "error": _said(e)})
+        raise
+    if in_monitor:
+        ctx.drafts.answer(d.token, {"approved_in": "monitor", "by": who_am_i(), "at": _now(), "result": out})
+    return out
+
+
+def answered(drafts: Drafts, token: str) -> dict:
+    """A commit of a draft that a person already answered in the Activity Monitor: what they decided."""
+    answer = drafts.answered(token)
+    if answer is None:
         raise ToolError("Unknown or already used token. Draft the change again.")
-    return save_batch(ctx, d) if d.action == "batch" else save(ctx, d)
+    by, at = answer.get("by") or "The person at this PC", answer.get("at")
+    if answer.get("rejected"):
+        raise ToolError(f"{by} rejected this change in the Activity Monitor ({at}), so nothing was saved. Ask what to change before "
+                        "drafting it again.")
+    if isinstance(answer.get("result"), dict):
+        return {**answer["result"], "approved_in": "monitor",
+                "note": f"{by} approved this change in the Activity Monitor ({at}) and it was saved then; it was not sent again."}
+    raise ToolError(f"{by} approved this change in the Activity Monitor ({at}), but it was not saved: {answer.get('error')}")
+
+
+def reject(config: Config, drafts: Drafts, token: str) -> dict:
+    """A person said no to a draft in the Activity Monitor: it is deleted, with its records for a batch, and the write
+    log and the draft's answer say so. Needs no QuickBooks."""
+    d = drafts.take(token)
+    if d is None:
+        raise ToolError("This draft is gone: it was answered already, or it expired.")
+    if d.action == "batch":
+        for child in json.loads(d.request):
+            drafts.take(child)
+    entry = {"token": d.token, "companyFile": d.company_file, "action": d.action, "entity": d.entity, "summary": d.summary,
+             "reason": d.reason, "source": d.source, **asked(d), "outcome": "rejected", "answered_in": "monitor"}
+    write_audit(config.audit_log, entry)
+    drafts.answer(d.token, {"rejected": True, "by": who_am_i(), "at": _now()})
+    return entry
 
 
 @tool(

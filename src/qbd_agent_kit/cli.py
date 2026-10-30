@@ -15,17 +15,19 @@ import sys
 import textwrap
 import time
 import traceback
-from contextlib import contextmanager, nullcontext
-from typing import Any, Iterator
+from contextlib import nullcontext
+from typing import Any
 
 from . import __version__
 from .bridge.com import ComTransport
 from .config import Config, load_config
 from .demo.transport import DemoTransport
-from .errors import InvalidArguments, QbConnectionError, QbStatusError, QbxmlInputError, ToolError, WriteUnconfirmed
+from .errors import InvalidArguments, Paused, QbConnectionError, QbStatusError, QbxmlInputError, Stopped, ToolError, WriteUnconfirmed
 from .jsutil import MISSING, dumps, num_str, text
 from .qb.client import QbClient
 from .qb.dates import local_today
+from .safety.audit import calling_program, who_am_i, write_call
+from .safety.live import Live, paused, remember_quickbooks, remembered, take_turn, who
 from .tools import error_text, run_tool
 from .tools.args import Arg
 from .tools.common import Ctx, Drafts, Tool, company_facts
@@ -39,7 +41,7 @@ RENAMED = {"qb_inventory_reorder": "reorder", "qb_write_log": "log"}
 COMMANDS = {RENAMED.get(t.name, t.name[3:].replace("_", "-")): t for _, tools in GROUPS for t in tools}
 POSITIONAL = {
     "search": ["type"], "export": ["type"], "count": ["type"], "changes": ["since"], "coding": ["vendor"], "match-payment": ["customer", "amount"], "trace": ["ref"], "stock-history": ["item"], "reconcile-check": ["account"], "get": ["type", "id"], "report": ["report"], "schema": ["request"], "raw": ["request"],
-    "draft": ["action", "type"], "import": ["type"], "commit": ["token"], "undo": ["token"],
+    "draft": ["action", "type"], "import": ["type"], "commit": ["token"], "undo": ["token"], "addons": ["action", "addon"],
 }
 SETUP = {
     "doctor": "Check this PC and the connection to QuickBooks",
@@ -55,19 +57,27 @@ class Usage(Exception):
 # ---------------------------------------------------------------- reading the command line
 
 
+IDENTITY = {"--agent": "agent", "--session": "session", "--session-title": "session_title"}  # = QBD_AGENT, QBD_SESSION...
+
+
 def split_globals(argv: list[str]) -> tuple[dict[str, Any], list[str]]:
     opts: dict[str, Any] = {"demo": False, "pretty": False, "version": False, "help": False, "out": None}
     rest: list[str] = []
     it = iter(argv)
     for a in it:
+        flag, eq, value = a.partition("=")
         if a in ("--demo", "--pretty", "--version"):
             opts[a[2:]] = True
         elif a in ("--help", "-h"):
             opts["help"] = True
-        elif a == "--out" or a.startswith("--out="):
-            opts["out"] = a[6:] if a.startswith("--out=") else next(it, None)
+        elif flag == "--out":
+            opts["out"] = value if eq else next(it, None)
             if not opts["out"]:
                 raise Usage("--out needs a file name.")
+        elif flag in IDENTITY:
+            opts[IDENTITY[flag]] = value if eq else next(it, None)
+            if not opts[IDENTITY[flag]]:
+                raise Usage(f"{flag} needs a value.")
         else:
             rest.append(a)
     return opts, rest
@@ -233,33 +243,46 @@ def make_context(config: Config, open_timeout: float | None = None) -> Ctx:
     return Ctx(qb=QbClient(transport, config.qbxml_version), config=config, today=local_today, drafts=drafts, cache={})
 
 
-def _try_lock(f: Any) -> bool:
-    try:
-        if sys.platform == "win32":
-            import msvcrt
-
-            f.seek(0)
-            msvcrt.locking(f.fileno(), msvcrt.LK_NBLCK, 1)
-        else:
-            import fcntl
-
-            fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        return True
-    except OSError:
-        return False
+def with_identity(config: Config, opts: dict[str, Any]) -> Config:
+    """Who runs this command: the assistant's name and session from the options or QBD_AGENT, QBD_SESSION and
+    QBD_SESSION_TITLE; without a name, the program that started qbd."""
+    for k in IDENTITY.values():
+        if opts.get(k):
+            setattr(config, k, re.sub(r"\s+", " ", opts[k]).strip()[: 60 if k == "agent" else 80])
+    if not config.agent:
+        config.program = calling_program()
+    return config
 
 
-@contextmanager
-def one_at_a_time(folder: str, wait: float) -> Iterator[None]:
-    """QuickBooks answers one request at a time, so commands from several agents take turns."""
-    os.makedirs(folder, exist_ok=True)
-    with open(os.path.join(folder, "quickbooks.lock"), "a+b") as f:
-        deadline = time.monotonic() + wait
-        while not _try_lock(f):
-            if time.monotonic() > deadline:
-                raise QbConnectionError("busy", "Another qbd command is using QuickBooks right now.", "Run this command again in a moment.")
-            time.sleep(0.2)
-        yield  # closing the file releases the lock
+def identity(config: Config) -> dict[str, str]:
+    """The call log's and live file's fields for who ran a command."""
+    out = {"agent": config.agent} if config.agent else {"program": config.program} if config.program else {}
+    return {**out, **({"session": config.session} if config.session else {}),
+            **({"session_title": config.session_title} if config.session_title else {})}
+
+
+def company(ctx: Ctx | None, config: Config) -> dict[str, str]:
+    """The company file a command worked in: the one QuickBooks opened, else the one it was bound to; and its name,
+    once qbd has read it."""
+    path = (ctx.qb.company_file if ctx else None) or config.company_file
+    if not path:
+        return {}
+    facts = ctx.cache.get(f"facts:{path}") if ctx else None
+    name = facts.name if facts is not None else remembered(config.state_dir, config.demo, path).get("company")
+    return {**({"company": name} if name else {}), "company_file": path}
+
+
+def remember(ctx: Ctx, config: Config) -> None:
+    """What qbd read about the company file this time, for the Activity Monitor's Safety panel."""
+    host = ctx.qb.host
+    if host is None or not host.company_file:
+        return
+    facts = ctx.cache.get(f"facts:{host.company_file}")
+    remember_quickbooks(config.state_dir, config.demo, host.company_file, {
+        "product": host.product_name, "version": host.version, "country": host.country, "qbxml": host.qbxml_version,
+        **({"company": facts.name, "closing_date": facts.closing_date} if facts is not None else {}),
+        "by": config.agent or config.program or "",
+    })
 
 
 def failure(e: BaseException, cmd: str) -> tuple[dict, int]:
@@ -273,6 +296,11 @@ def failure(e: BaseException, cmd: str) -> tuple[dict, int]:
         code, message, status = "refused", str(e), 2
     elif isinstance(e, WriteUnconfirmed):
         code, message = "unconfirmed", str(e)
+    elif isinstance(e, Stopped):
+        code, message, status = "stopped", str(e), 3
+        hint = "Tell the person. This session's next commands wait until they click Resume in the Activity Monitor."
+    elif isinstance(e, Paused):
+        code, message, hint, status = "paused", str(e), e.hint, 3
     elif isinstance(e, QbConnectionError):
         code, message, hint, status = e.code, e.message, e.hint, 3 if e.needs_person else 1
     elif isinstance(e, QbStatusError):
@@ -284,13 +312,46 @@ def failure(e: BaseException, cmd: str) -> tuple[dict, int]:
     return {"error": {"code": code, "message": message, **({"hint": hint} if hint else {}), "retryable": retryable}}, status
 
 
-def emit(value: Any, opts: dict[str, Any]) -> None:
+def emit(value: Any, opts: dict[str, Any]) -> int:
     out = dumps(value, pretty=opts["pretty"])
     if opts["out"]:
         with open(opts["out"], "w", encoding="utf-8", newline="\n") as f:
             f.write(out + "\n")
     else:
         print(out)
+    return len(out)
+
+
+def short(v: str) -> str:
+    return v if len(v) <= 120 else v[:120] + "…"
+
+
+def call_args(args: dict[str, Any], positional: list[str]) -> dict[str, Any]:
+    """A command's arguments for the call log, the positional ones first. A record passed in (--fields) shows only its
+    field names."""
+    out: dict[str, Any] = {}
+    for k, v in sorted(args.items(), key=lambda kv: kv[0] not in positional):
+        if isinstance(v, dict):
+            out[k] = sorted(v)
+        elif isinstance(v, list) and any(isinstance(x, dict) for x in v):
+            out[k] = f"{len(v)} records"
+        else:
+            out[k] = short(v) if isinstance(v, str) else v
+    return out
+
+
+def log_call(config: Config, cmd: str, given: Any, outcome: dict[str, Any], started: float, ctx: Ctx | None, size: int) -> None:
+    """One line in the call log for each command: who ran it, in which company file, with which settings, and what it
+    asked QuickBooks. Failing to write it never fails the command."""
+    requests = ctx.qb.calls if ctx else []
+    t = COMMANDS.get(cmd)
+    try:
+        entry = {**identity(config), **company(ctx, config), "settings": config.settings(), "command": cmd, **({"title": t.title} if t else {}),
+                 "args": given, **outcome, "ms": round((time.monotonic() - started) * 1000), "items": sum(r.get("items", 0) for r in requests),
+                 "output_bytes": size, "requests": requests}
+        write_call(config.call_log, entry)
+    except Exception:  # noqa: BLE001 - the answer is already printed; a failed commit must not look like a failed command
+        pass
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -302,6 +363,11 @@ def main(argv: list[str] | None = None) -> int:
     opts: dict[str, Any] = {"pretty": False, "out": None}
     cmd = ""
     transport: Any = None
+    config: Config | None = None
+    ctx: Ctx | None = None
+    live: Live | None = None
+    given: Any = None  # the arguments as the call log shows them
+    started = time.monotonic()
     try:
         opts, rest = split_globals(sys.argv[1:] if argv is None else argv)
         cmd = rest[0] if rest else ""
@@ -311,31 +377,52 @@ def main(argv: list[str] | None = None) -> int:
         if opts["help"] or cmd in ("", "help"):
             print(help_text(rest[1] if cmd == "help" and len(rest) > 1 else cmd))
             return 0
-        config = load_config(demo=True) if opts["demo"] else load_config()
+        config = with_identity(load_config(demo=True) if opts["demo"] else load_config(), opts)
         if cmd == "doctor":
             return doctor(config)
         if cmd == "authorize":
             return authorize(config)
+        given = [short(x) for x in rest[1:]]
         t = COMMANDS.get(cmd)
         if t is None:
             raise Usage(f"Unknown command {cmd}.")
         if t.writes and not config.allow_writes:
             raise ToolError("Changes are turned off on this PC (QBD_ALLOW_WRITES is not true). The owner can turn them on; see the README.")
         args = tool_args(t, POSITIONAL.get(cmd, []), rest[1:])
+        given = call_args(args, POSITIONAL.get(cmd, []))
         ctx = make_context(config)
         transport = ctx.qb.transport
-        # The sample company lives in this process, and schema only reads the kit's own files.
-        turn = nullcontext() if config.demo or cmd == "schema" else one_at_a_time(config.state_dir, min(config.timeout_seconds, 60))
+        # The sample company lives in this process; schema, activity and addons work on the kit's own files.
+        if config.demo or cmd in ("schema", "activity", "addons"):
+            turn: Any = nullcontext()
+        else:
+            key = who(config.agent, config.session, config.program)
+            held = paused(config.state_dir, key)
+            if held is not None:
+                raise Paused(str(held.get("by") or "The person at this PC"), str(held.get("at") or ""))
+            live = Live(config.state_dir, {**key, **identity(config), "user": who_am_i(), "command": cmd, "title": t.title, "args": given})
+            live.name_of = lambda path: remembered(config.state_dir, config.demo, path).get("company")
+            ctx.live = ctx.qb.watch = live
+            turn = take_turn(config.state_dir, live, min(config.timeout_seconds, 60))
         with turn:
             try:
                 result = run_tool(ctx, t, args)
             finally:
                 transport.close()
-        emit(result, opts)
+                remember(ctx, config)
+        size, outcome = emit(result, opts), {"outcome": "ok"}
         status = 0
-    except Exception as e:  # noqa: BLE001 - every failure becomes a JSON error
+    except (Exception, Stopped) as e:  # noqa: BLE001 - every failure becomes a JSON error
         body, status = failure(e, cmd)
-        print(dumps(body, pretty=opts["pretty"]))
+        out = dumps(body, pretty=opts["pretty"])
+        print(out)
+        size, outcome = len(out), {"outcome": body["error"]["code"], "error": body["error"]["message"],
+                                   **({"hint": body["error"]["hint"]} if "hint" in body["error"] else {})}
+    finally:
+        if live is not None:
+            live.end()
+    if config is not None and config.call_log and given is not None:
+        log_call(config, cmd, given, outcome, started, ctx, size)
     if getattr(transport, "stuck", False):
         # A request is still running inside QuickBooks on a thread that cannot be stopped: leave without waiting for it.
         sys.stdout.flush()
@@ -412,6 +499,7 @@ def doctor(config: Config) -> int:
     else:
         line(None, "Writes: off (read-only)")
     line(None, f"Audit log: {config.audit_log}")
+    line(None, f"Call log: {config.call_log or 'off (QBD_CALL_LOG)'}")
     ctx = make_context(config, open_timeout=min(config.open_timeout_seconds, 45))
     try:
         host = ctx.qb.host_info()

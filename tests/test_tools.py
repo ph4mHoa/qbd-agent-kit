@@ -130,7 +130,7 @@ class Workflows(unittest.TestCase):
         self.assertEqual(status["closing_date"], "ok")
         self.assertEqual(status["stale_documents"], "info")
         stale = next(c for c in h["checks"] if c["check"] == "stale_documents")
-        self.assertEqual([d["ref"] for d in stale["details"]], ["SO-880", "PO-1468"])
+        self.assertEqual([(d["ref"], d["amount"]) for d in stale["details"]], [("SO-880", 242.89), ("PO-1468", 246)])
         self.assertEqual(h["summary"]["errors"], 0)
 
     def test_stock_shows_each_site_and_puts_oversold_rows_first(self):
@@ -768,9 +768,13 @@ class Records(unittest.TestCase):
         self.assertIn("<FromReportDate>2026-10-01</FromReportDate><ToReportDate>2026-10-20</ToReportDate>", rq)
         self.assertNotIn("ReportDateMacro", rq)
         sent.clear()
-        with self.assertRaisesRegex(Exception, "sample company has no"):
+        with self.assertRaisesRegex(ToolError, "one item at a time"):  # for every item at once it stopped QuickBooks
             call("qb_report", {"report": "inventory_valuation", "to": "2026-09-30"})
+        self.assertEqual(sent, [])
+        with self.assertRaisesRegex(Exception, "sample company has no"):
+            call("qb_report", {"report": "InventoryValuationSummary", "to": "2026-09-30", "item": "LED Flood Light 50W"})
         self.assertIn("<FromReportDate>2026-09-30</FromReportDate><ToReportDate>2026-09-30</ToReportDate>", "".join(sent))
+        self.assertIn("<ReportItemFilter><FullNameWithChildren>LED Flood Light 50W</FullNameWithChildren></ReportItemFilter>", "".join(sent))
         with self.assertRaisesRegex(ToolError, "Give from as well as to"):
             call("qb_report", {"report": "sales_by_item", "to": "2026-09-30"})
 
@@ -957,6 +961,20 @@ class Changes(unittest.TestCase):
                 "InvoiceLineMod": [{"TxnLineID": "-1", "ItemRef": "Primer 1gal", "Quantity": 1, "Rate": 24}],
             }})
         self.assertEqual(call("qb_write_log", {"limit": 1})["entries"][0]["outcome"], "done")
+
+    def test_a_check_with_a_number_is_not_queued_for_printing(self):
+        # QuickBooks marked checks added with a number "to be printed" and dropped the number.
+        ctx, call = demo(QBD_WRITE_ENTITIES="check")
+        sent: list[str] = []
+        process = ctx.qb.transport.process
+        ctx.qb.transport.process = lambda xml: (sent.append(xml), process(xml))[1]
+        d = call("qb_draft", {"action": "add", "type": "check", "fields": {
+            "AccountRef": "Business Checking", "PayeeEntityRef": "Riverbend Properties", "RefNumber": "5290", "TxnDate": TODAY,
+            "ExpenseLineAdd": [{"AccountRef": "Rent Expense", "Amount": 100}]}})
+        call("qb_commit", {"token": d["token"]})
+        add = next(x for x in sent if "<CheckAddRq" in x)
+        self.assertIn("<RefNumber>5290</RefNumber>", add)
+        self.assertIn("<IsToBePrinted>false</IsToBePrinted>", add)
 
     def test_previews_show_what_quickbooks_fills_in_and_the_limit_counts_it(self):
         ctx, call = demo(QBD_WRITE_ENTITIES="sales_order,invoice,receive_payment,journal_entry,deposit,inventory_adjustment", QBD_MAX_AMOUNT="500")

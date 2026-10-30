@@ -8,6 +8,9 @@ Download both first, for the same Python version and bitness: the embeddable pac
 https://www.python.org/downloads/windows/ and the pywin32 wheel from https://pypi.org/project/pywin32/#files.
 QuickBooks 2022 and later are 64-bit (amd64); older versions need the 32-bit (win32) files. Writes
 <out dir>/qbd-agent-kit-<version>-windows-<bitness>.zip (out dir: dist).
+
+Add-ons such as the Activity Monitor are not in it: add-ons.cmd installs them from qbd's catalog (build their zips
+first with scripts/build-addon.py, which writes the catalog this zip carries).
 """
 from __future__ import annotations
 
@@ -38,9 +41,15 @@ Guide: https://github.com/ph4mHoa/qbd-agent-kit/blob/main/docs/setup.md
 5. So an agent can type just qbd, add C:\\qbd to your Path: Start > "Edit environment variables for your
    account" > Path > Edit > New. qbd.cmd serves Command Prompt and PowerShell, qbd serves Git Bash.
 
+To see what the AI did on this PC, double-click what-the-ai-did.cmd: a page opens in the web browser with every
+request it made and every change it saved.
+
+To add the Activity Monitor, a window that shows what the AI does in QuickBooks as it works and lets you approve its
+changes, double-click add-ons.cmd and type its number. It downloads from GitHub; on a PC without internet, download
+its zip from the release page on another PC, then run:   C:\\qbd\\qbd.cmd addons install <the zip> --yes
+
 To update, unzip the new version over this folder; QuickBooks keeps its permission.
 """
-
 
 def build(python_zip: Path, wheel: Path, out: Path) -> Path:
     py = re.fullmatch(r"python-(\d+)\.(\d+)\.(\d+)-embed-(amd64|win32)\.zip", python_zip.name)
@@ -66,6 +75,9 @@ def build(python_zip: Path, wheel: Path, out: Path) -> Path:
     shutil.copytree(ROOT / "src" / "qbd_agent_kit", site / "qbd_agent_kit", ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
     (stage / "qbd.cmd").write_bytes(b'@"%~dp0python\\python.exe" -m qbd_agent_kit %*\r\n')
     (stage / "qbd").write_bytes(b'#!/bin/sh\nexec "$(dirname "$0")/python/python.exe" -m qbd_agent_kit "$@"\n')
+    # For a double-click: the window closes once the page opens, and stays open to show an error.
+    (stage / "what-the-ai-did.cmd").write_bytes(b'@"%~dp0python\\python.exe" -m qbd_agent_kit activity --open --limit 1 || pause\r\n')
+    (stage / "add-ons.cmd").write_bytes(b'@"%~dp0python\\python.exe" -m qbd_agent_kit.addons || pause\r\n')
     shutil.copy(ROOT / "LICENSE", stage / "LICENSE.txt")
     readme = README.format(version=__version__, python=".".join(py.groups()[:3]), bitness=BITNESS[arch])
     (stage / "README.txt").write_bytes(readme.replace("\n", "\r\n").encode("utf-8"))
@@ -78,7 +90,8 @@ def build(python_zip: Path, wheel: Path, out: Path) -> Path:
 
 
 if __name__ == "__main__":
-    if len(sys.argv) not in (3, 4):
+    args = sys.argv[1:]
+    if len(args) not in (2, 3):
         sys.exit(__doc__)
-    path = build(Path(sys.argv[1]), Path(sys.argv[2]), Path(sys.argv[3] if len(sys.argv) == 4 else ROOT / "dist"))
+    path = build(Path(args[0]), Path(args[1]), Path(args[2] if len(args) == 3 else ROOT / "dist"))
     print(f"wrote {path} ({path.stat().st_size / 1e6:.1f} MB)")

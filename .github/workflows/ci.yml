@@ -24,5 +24,11 @@ jobs:
           allow-prereleases: true
       - run: python -m pip install -e .
       - run: python -X dev -W error -m unittest discover -s tests -v
+      # The Activity Monitor add-on; its window tests run where wxPython has a wheel (Windows) and skip elsewhere.
+      - run: python -m pip install wxPython==4.3.2
+        if: runner.os == 'Windows'
+      - run: python -X dev -W error -m unittest discover -s addons/activity-monitor/tests -v
+        env:
+          PYTHONPATH: addons/activity-monitor
       - run: qbd --version
       - run: qbd health-check --demo

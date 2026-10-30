@@ -1,6 +1,6 @@
 {
   "name": "qbd-agent-kit",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Agent skills for QuickBooks Desktop through the qbd command line: daily briefs, collections and payment matching, bills and cash, month-end checks, reorders, bills entered from documents, and support cases, with every change approved by you. Install qbd on the Windows PC that hosts QuickBooks (see the README).",
   "author": {
     "name": "Pham Hoa",
@@ -16,5 +16,9 @@
     "cli",
     "accounting",
     "bookkeeping"
-  ]
+  ],
+  "icon": "./assets/icon.png",
+  "documentationUrl": "https://github.com/ph4mHoa/qbd-agent-kit/blob/main/docs/setup.md",
+  "supportUrl": "https://github.com/ph4mHoa/qbd-agent-kit/issues",
+  "privacyPolicyUrl": "https://github.com/ph4mHoa/qbd-agent-kit/blob/main/PRIVACY.md"
 }

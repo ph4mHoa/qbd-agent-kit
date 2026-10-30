@@ -122,6 +122,26 @@ class WriteUnconfirmed(Exception):
     """A change was sent but QuickBooks did not confirm it, so it may or may not be saved."""
 
 
+class Stopped(BaseException):
+    """A person asked in the Activity Monitor to stop this command after its current step. A BaseException, so the
+    workflows that carry on past a failed step stop too."""
+
+    def __init__(self, by: str, steps: int):
+        super().__init__(f"Stopped by {by} in the Activity Monitor after {steps} step{'' if steps == 1 else 's'}. "
+                         "Nothing was saved.")
+        self.by = by
+        self.steps = steps
+
+
+class Paused(Exception):
+    """A person paused this assistant's session in the Activity Monitor: its commands wait until they click Resume."""
+
+    def __init__(self, by: str, at: str):
+        super().__init__(f"{by} paused this session in the Activity Monitor ({at}), so qbd runs none of its commands until they "
+                         "click Resume.")
+        self.hint = "Tell the person; ask them to click Resume in the Activity Monitor's Live view, then run the command again."
+
+
 class InvalidArguments(Exception):
     """Arguments that do not fit a command; issues are (path, message) pairs."""
 

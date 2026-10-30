@@ -8,7 +8,9 @@ description: Plan which vendor bills to pay and check that cash covers them, fro
 ## Steps
 
 1. Run `qbd payables` (bills due in the next 14 days; `--days-ahead N` to change it) and `qbd cash-position`
-   (30 days ahead).
+   (30 days ahead). When the person is at this PC, add `--open` to `qbd cash-position`: their web browser shows the
+   forecast as a figure (cash at each week's end, money in and out, the lowest point, the bills behind each week).
+   Then keep your reply to what the figure does not say: the payment run and what to decide.
 2. Ask, if you do not know it, the lowest bank balance the person wants to keep.
 3. Propose a payment run:
    - **Pay now:** overdue bills, oldest first, and bills due within the week.

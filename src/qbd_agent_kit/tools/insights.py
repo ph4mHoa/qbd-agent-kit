@@ -18,6 +18,7 @@ from ..qbxml.build import LIST_ID
 from ..qbxml.parse import Report, ReportRow, col_index
 from ..qbxml.schema import message_model
 from .args import Arg
+from . import pages
 from .common import Ctx, company_facts, date, num, sum_of, tool
 from .write import item_price
 
@@ -345,6 +346,7 @@ def _is_invoice(d: dict) -> bool:
         "customer": Arg("str", "Only this customer (full name)"),
         "top": Arg("int", "How many customers to list", default=15, min=1, max=100),
         "invoices_per_customer": Arg("int", default=5, min=0, max=50),
+        "open": Arg("bool", "Also draw it as a page and open it in the web browser"),
     },
 )
 def receivables(ctx: Ctx, a: dict) -> dict:
@@ -419,7 +421,7 @@ def receivables(ctx: Ctx, a: dict) -> dict:
     in_credit = [c for c in customers if c["credit"] > 0 and c["balance"] <= 0]
     # Credit beyond a customer's own invoices, as in daily-brief: owed by the customers who owe - credit_balances = open.
     credit_balances = sum_of(customers, lambda c: max(0, -c["balance"]))
-    return {
+    out = {
         "as_of": today,
         "totals": {
             "open": sum_of(customers, lambda c: c["balance"]),
@@ -442,6 +444,11 @@ def receivables(ctx: Ctx, a: dict) -> dict:
         } if in_credit else {}),
         **({"notes": notes} if notes else {}),
     }
+    if a["open"]:
+        out.update(pages.receivables(ctx, out, [
+            {"customer": c["name"], "balance": c["balance"], "overdue": c["overdue"], "oldest": c["oldest_days_late"],
+             "next_step": stage(c["oldest_days_late"]), "credit": c["credit"], "docs": c["docs"]} for c in top]))
+    return out
 
 
 # ---------------------------------------------------------------- qb_match_payment
@@ -968,6 +975,7 @@ def coding(ctx: Ctx, a: dict) -> dict:
     {
         "days_ahead": Arg("int", default=30, min=7, max=90),
         "count_overdue_receivables": Arg("bool", "Assume overdue invoices are paid in the first week", default=False),
+        "open": Arg("bool", "Also draw it as a page and open it in the web browser"),
     },
 )
 def cash_position(ctx: Ctx, a: dict) -> dict:
@@ -976,22 +984,29 @@ def cash_position(ctx: Ctx, a: dict) -> dict:
     owed = [d for p in by_party(open_items(ctx, "AR")) for d in p["docs"] if d["left"] > 0]
     bills = [d for p in by_party(open_items(ctx, "AP")) for d in p["docs"] if d["left"] > 0]
     start = round2(cash["bank_total"] + cash["undeposited_funds"])
-    running = start
-    lowest = {"amount": start, "week_end": today}
     overdue_in = [d for d in owed if d["due"] < today]
-    table = []
-    for w in range(math.ceil(a["days_ahead"] / 7)):
-        from_ = add_days(today, w * 7)
-        to = add_days(from_, 6)
-        money_in = sum_of([d for d in owed if from_ <= d["due"] <= to], lambda d: d["left"]) + (
-            sum_of(overdue_in, lambda d: d["left"]) if w == 0 and a["count_overdue_receivables"] else 0
-        )
-        money_out = sum_of([d for d in bills if from_ <= d["due"] <= to or (w == 0 and d["due"] < today)], lambda d: d["left"])
-        running = round2(running + money_in - money_out)
-        if running < lowest["amount"]:
-            lowest = {"amount": running, "week_end": to}
-        table.append({"week_start": from_, "week_end": to, "money_in": round2(money_in), "money_out": money_out, "closing_estimate": running})
-    return {
+
+    # The weeks, the lowest point and the invoices and bills behind each week (the page shows them).
+    def forecast(count_overdue: bool) -> tuple[list[dict], dict, list[dict]]:
+        running = start
+        lowest = {"amount": start, "week_end": today}
+        table, docs = [], []
+        for w in range(math.ceil(a["days_ahead"] / 7)):
+            from_ = add_days(today, w * 7)
+            to = add_days(from_, 6)
+            ins = [d for d in owed if from_ <= d["due"] <= to]
+            outs = [d for d in bills if from_ <= d["due"] <= to or (w == 0 and d["due"] < today)]
+            money_in = sum_of(ins, lambda d: d["left"]) + (sum_of(overdue_in, lambda d: d["left"]) if w == 0 and count_overdue else 0)
+            money_out = sum_of(outs, lambda d: d["left"])
+            running = round2(running + money_in - money_out)
+            if running < lowest["amount"]:
+                lowest = {"amount": running, "week_end": to}
+            table.append({"week_start": from_, "week_end": to, "money_in": round2(money_in), "money_out": money_out, "closing_estimate": running})
+            docs.append({"in": ins, "out": outs})
+        return table, lowest, docs
+
+    table, lowest, _ = forecast(a["count_overdue_receivables"])
+    out = {
         "as_of": today,
         "starting_cash": {"bank": cash["bank_total"], "undeposited_funds": cash["undeposited_funds"], "total": start},
         "credit_cards_owed": cash["credit_cards_owed"],
@@ -1006,6 +1021,9 @@ def cash_position(ctx: Ctx, a: dict) -> dict:
             *(["Bank balances are in each account's currency and invoices and bills in the home currency; the forecast adds them without converting."] if "currency_note" in cash else []),
         ],
     }
+    if a["open"]:
+        out.update(pages.cash(ctx, out, forecast(False), forecast(True), overdue_in))
+    return out
 
 
 # ---------------------------------------------------------------- qb_inventory_reorder
@@ -2534,8 +2552,9 @@ def health_check(ctx: Ctx, a: dict) -> dict:
                 "ReportDetailLevelFilter": "SummaryOnly", "IncludeColumn": ["TxnID", "TxnType", "Date", "RefNumber", "Name", "Amount"],
             })
             at = {"date": column(r, r"^date\Z", "Date"), "ref": column(r, r"^num\Z", "RefNumber"), "name": column(r, r"^name\Z", "Name"), "amount": column(r, r"^amount\Z", "Amount")}
+            # abs: the Open Purchase Orders report gives each order as a negative amount.
             rows = [
-                {"type": type_, "ref": _at(x.values, at["ref"]), "date": text(nz(_at(x.values, at["date"]), "")), "party": _at(x.values, at["name"]), "amount": num(_at(x.values, at["amount"]))}
+                {"type": type_, "ref": _at(x.values, at["ref"]), "date": text(nz(_at(x.values, at["date"]), "")), "party": _at(x.values, at["name"]), "amount": abs(num(_at(x.values, at["amount"])))}
                 for x in r.rows if x.kind == "data"
             ]
             return sorted(rows, key=lambda x: x["date"])

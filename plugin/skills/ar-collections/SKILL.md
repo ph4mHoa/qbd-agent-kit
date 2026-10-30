@@ -7,7 +7,8 @@ description: Plan collections for overdue customer invoices in QuickBooks Deskto
 
 ## Steps
 
-1. Run `qbd receivables` (add `--customer "<full name>"` for one customer).
+1. Run `qbd receivables` (add `--customer "<full name>"` for one customer). When the person is at this PC, add
+   `--open`: their web browser shows who owes and how late, oldest money first, with each customer's invoices.
 2. Before chasing anyone with `unapplied_payments_or_credits`, say so: that money may already cover an invoice.
    Suggest applying it in QuickBooks (Customers > Receive Payments) first. Customers under
    `customers_in_credit` have payments or credits that cover all their invoices: nothing to chase.

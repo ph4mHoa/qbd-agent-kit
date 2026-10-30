@@ -6,6 +6,7 @@ import os
 import re
 import sys
 import tempfile
+import time
 import unittest
 import zipfile
 from pathlib import Path
@@ -53,7 +54,7 @@ class Cli(unittest.TestCase):
 
     def test_the_plugin_has_the_package_version(self):
         root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        with open(os.path.join(root, ".claude-plugin", "plugin.json"), encoding="utf-8") as f:
+        with open(os.path.join(root, "plugin", ".claude-plugin", "plugin.json"), encoding="utf-8") as f:
             self.assertEqual(json.load(f)["version"], __version__)
 
     def test_the_commands_reference_matches_the_code(self):
@@ -64,7 +65,8 @@ class Cli(unittest.TestCase):
         with open(os.path.join(root, "docs", "commands.md"), encoding="utf-8") as f:
             self.assertEqual(f.read(), gen.render(), "docs/commands.md is out of date: run python scripts/gen-docs.py")
 
-    def test_the_windows_zip_holds_python_pywin32_and_the_kit_at_its_root(self):
+    def zip_inputs(self):
+        """The Windows zip's build script, and fake downloads for it."""
         root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         spec = importlib.util.spec_from_file_location("build_zip", os.path.join(root, "scripts", "build-windows-zip.py"))
         build = importlib.util.module_from_spec(spec)
@@ -79,28 +81,37 @@ class Cli(unittest.TestCase):
         with zipfile.ZipFile(wheel, "w") as z:
             z.writestr("pywin32.pth", "win32\nwin32\\lib\nPythonwin\nimport pywin32_bootstrap\n")
             z.writestr("win32com/__init__.py", "")
-        out = Path(self.home.name, "dist")
-        path = build.build(Path(python_zip), Path(wheel), out)
+        return build, Path(python_zip), Path(wheel), Path(self.home.name, "dist")
+
+    def test_the_windows_zip_holds_python_pywin32_and_the_kit_at_its_root(self):
+        build, python_zip, wheel, out = self.zip_inputs()
+        path = build.build(python_zip, wheel, out)
         self.assertEqual(path.name, f"qbd-agent-kit-{__version__}-windows-x64.zip")
         with zipfile.ZipFile(path) as z:
             names = set(z.namelist())
             pth = z.read("python/python315._pth").decode()
             launcher = z.read("qbd.cmd")
+            shortcut = z.read("what-the-ai-did.cmd")
+            addons = z.read("add-ons.cmd")
         for name in ("qbd", "README.txt", "LICENSE.txt", "python/Lib/site-packages/pywin32.pth", "python/Lib/site-packages/win32com/__init__.py",
-                     "python/Lib/site-packages/qbd_agent_kit/cli.py", "python/Lib/site-packages/qbd_agent_kit/qbxml/schema.json"):
+                     "python/Lib/site-packages/qbd_agent_kit/cli.py", "python/Lib/site-packages/qbd_agent_kit/qbxml/schema.json",
+                     "python/Lib/site-packages/qbd_agent_kit/addons/catalog.json"):
             self.assertIn(name, names)
         self.assertFalse([n for n in names if "__pycache__" in n])
+        self.assertNotIn("activity-monitor.cmd", names)
         self.assertEqual(pth.split("\r\n")[-3:], ["Lib\\site-packages", "import site", ""])
         self.assertNotIn("#import site", pth)
         self.assertEqual(launcher, b'@"%~dp0python\\python.exe" -m qbd_agent_kit %*\r\n')
+        self.assertEqual(shortcut, b'@"%~dp0python\\python.exe" -m qbd_agent_kit activity --open --limit 1 || pause\r\n')
+        self.assertEqual(addons, b'@"%~dp0python\\python.exe" -m qbd_agent_kit.addons || pause\r\n')
         with self.assertRaises(SystemExit):
-            build.build(Path(python_zip), Path(src, "pywin32-312-cp315-cp315-win32.whl"), out)
+            build.build(python_zip, wheel.with_name("pywin32-312-cp315-cp315-win32.whl"), out)
 
     def test_docs_and_skills_name_only_real_commands_and_options(self):
         root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        paths = [os.path.join(root, "README.md")]
+        paths = [os.path.join(root, "README.md"), os.path.join(root, "PRIVACY.md"), os.path.join(root, "plugin", "README.md")]
         paths += [os.path.join(root, "docs", f) for f in os.listdir(os.path.join(root, "docs")) if f != "commands.md"]
-        paths += [os.path.join(root, "skills", d, "SKILL.md") for d in os.listdir(os.path.join(root, "skills"))]
+        paths += [os.path.join(root, "plugin", "skills", d, "SKILL.md") for d in os.listdir(os.path.join(root, "plugin", "skills"))]
         for path in paths:
             with open(path, encoding="utf-8") as f:
                 text = f.read()
@@ -184,6 +195,98 @@ class Cli(unittest.TestCase):
                 e = self.error("status", code=1)
         self.assertEqual(e["code"], "busy")
         self.assertIs(e["retryable"], True)
+
+    def calls(self) -> list[dict]:
+        with open(os.path.join(self.home.name, "qbd-agent-kit", "calls-demo.jsonl"), encoding="utf-8") as f:
+            return [json.loads(x) for x in f]
+
+    def test_every_command_goes_to_the_call_log_with_counts_not_values(self):
+        names = [r["FullName"] for r in self.answer("--demo", "search", "customer", "--limit", "3")["rows"]]
+        self.error("--demo", "report", "audit_trail", code=2)
+        self.error("--demo", "nosuch", "--x", code=2)
+        found, refused, unknown = self.calls()
+        self.assertEqual((found["command"], found["title"], found["args"], found["outcome"]),
+                         ("search", "Search QuickBooks records", {"type": "customer", "limit": 3}, "ok"))
+        query = found["requests"][-1]
+        self.assertEqual(query["request"], "CustomerQueryRq")
+        self.assertGreaterEqual(query["items"], 3)
+        self.assertEqual(found["items"], sum(r.get("items", 0) for r in found["requests"]))
+        self.assertTrue(all(isinstance(r["ms"], int) for r in found["requests"]))
+        self.assertFalse([n for n in names if n in json.dumps(found)], "record values stay out of the call log")
+        self.assertEqual(refused["outcome"], "refused")
+        self.assertIn("Audit Trail", refused["error"])
+        self.assertEqual((unknown["command"], unknown["args"], unknown["outcome"]), ("nosuch", ["--x"], "invalid_arguments"))
+
+    def test_the_call_log_can_be_turned_off_and_keeps_90_days_in_parts(self):
+        with mock.patch.dict(os.environ, {"QBD_CALL_LOG": "off"}):
+            self.answer("--demo", "search", "customer", "--limit", "1")
+        folder = os.path.join(self.home.name, "qbd-agent-kit")
+        self.assertFalse(os.path.exists(os.path.join(folder, "calls-demo.jsonl")))
+        old = os.path.join(folder, "calls-demo.jsonl.1")  # a part from before 0.3, written 100 days ago
+        os.makedirs(folder, exist_ok=True)
+        with open(old, "w", encoding="utf-8") as f:
+            f.write('{"time": "2026-07-01T10:00:00.000Z", "command": "status"}\n')
+        os.utime(old, (time.time() - 100 * 86400,) * 2)
+        with mock.patch("qbd_agent_kit.safety.audit.CALL_LOG_ROTATE", 10):
+            self.answer("--demo", "search", "customer", "--limit", "1")
+            self.answer("--demo", "search", "vendor", "--limit", "1")
+        self.assertEqual([c["args"]["type"] for c in self.calls()], ["vendor"])
+        parts = [n for n in os.listdir(folder) if n.startswith("calls-demo.jsonl.")]
+        self.assertEqual(len(parts), 1, "the 100-day-old part is gone, the new one is kept")
+        self.assertRegex(parts[0], r"^calls-demo\.jsonl\.\d{8}-\d{6}$")
+        a = self.answer("--demo", "activity", "--days", "90")
+        self.assertEqual([c["args"]["type"] for c in a["calls"]], ["vendor", "customer"], "the page reads the older part too")
+
+    def test_the_activity_page_shows_changes_and_problems_in_plain_words_without_scripts(self):
+        self.answer("--demo", "search", "customer", "--name", "<script>alert(1)</script>")
+        self.error("--demo", "report", "audit_trail", code=2)
+        fields = '{"CustomerRef": {"FullName": "Granite Peak Contractors"}, "TotalAmount": 1250, "IsAutoApply": true}'
+        token = self.answer("--demo", "draft", "add", "receive_payment", "--fields", fields, "--reason", "Check from Granite Peak")["token"]
+        self.answer("--demo", "commit", token)
+        with mock.patch("webbrowser.open", return_value=True) as browser:
+            a = self.answer("--demo", "activity", "--open")
+        self.assertIs(a["opened"], True)
+        self.assertEqual(browser.call_args[0][0], Path(a["page"]).resolve().as_uri())
+        self.assertEqual({k: a["totals"][k] for k in ("commands", "changes_saved", "needs_a_look")},
+                         {"commands": 4, "changes_saved": 1, "needs_a_look": 1})
+        self.assertEqual(a["changes"][0]["reason"], "Check from Granite Peak")
+        with open(a["page"], encoding="utf-8") as f:
+            page = f.read()
+        for words in ("What the AI did in QuickBooks", "Saved to QuickBooks", "Previewed, not saved yet", "add · receive payment",
+                      "Refused", "Check from Granite Peak", "default-src 'none'", "&lt;script&gt;alert(1)"):
+            self.assertIn(words, page)
+        for technical in ("<script", "CustomerQueryRq", "TotalAmount", "IsAutoApply"):  # one short line per item, no request details
+            self.assertNotIn(technical, page)
+        self.assertEqual(set(a["calls"][0]), {"time", "command", "title", "args", "outcome", "ms", "items"})
+        self.answer("--demo", "activity")
+        self.assertEqual(self.answer("--demo", "activity")["totals"]["commands"], 4, "opening the page is not counted")
+
+    def test_cash_and_receivables_pages_draw_the_answer_without_scripts(self):
+        plain = self.answer("--demo", "cash-position")
+        with mock.patch("webbrowser.open", return_value=True) as browser:
+            a = self.answer("--demo", "cash-position", "--open")
+        self.assertEqual(browser.call_args[0][0], Path(a["page"]).resolve().as_uri())
+        self.assertEqual({k: v for k, v in a.items() if k not in ("page", "opened")}, plain, "the answer stays the same")
+        page = Path(a["page"]).read_text(encoding="utf-8")
+        for words in ("Cash for the next 5 weeks", "Count late invoices as paid · +$14,824.75", "See-through",
+                      "Lowest point: <b>$174,681.90</b>", "Lowest point: today, <b>$181,372.73</b>",
+                      "Summit Lumber Supply · bill INV-7000", "6 late bills ($3,321.50)", "default-src 'none'"):
+            self.assertIn(words, page)
+        with mock.patch("webbrowser.open", return_value=True):
+            r = self.answer("--demo", "receivables", "--open")
+        ar = Path(r["page"]).read_text(encoding="utf-8")
+        for words in ("Who owes you", "Bayside Hardware &amp; Supply", "Granite Peak Contractors", "116 days late",
+                      "final notice; consider holding new orders", "Customers owe $21,672.54.", "takes off $500.00"):
+            self.assertIn(words, ar)
+        for p in (page, ar):
+            self.assertNotIn("<script", p)
+            self.assertNotIn("Cascadia", p, "Chrome on Windows 10 1607 hangs drawing it")
+        from qbd_agent_kit.tools import pages
+        row = pages._customer({"customer": "<b>Evil</b>", "balance": 1.0, "overdue": 0, "oldest": 0, "next_step": "not due yet", "credit": 0,
+                               "docs": [{"type": "Invoice", "ref": "<i>", "due": "2026-01-02", "left": 1.0}]}, 1.0, "$", "2026-01-01")
+        self.assertIn("&lt;b&gt;Evil", row)
+        self.assertNotIn("<b>Evil", row)
+        self.assertNotIn("<i>", row)
 
 
 if __name__ == "__main__":

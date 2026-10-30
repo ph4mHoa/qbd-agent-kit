@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="assets/icon.png" width="96" alt="">
+<img src="https://raw.githubusercontent.com/ph4mHoa/qbd-agent-kit/main/assets/icon.png" width="96" alt="">
 
 # Agent Kit for QuickBooks Desktop
 
@@ -11,54 +11,63 @@ buyer; record commands reach any list, transaction or report; changes are saved 
 Every command prints one line of JSON.
 
 [![CI](https://github.com/ph4mHoa/qbd-agent-kit/actions/workflows/ci.yml/badge.svg)](https://github.com/ph4mHoa/qbd-agent-kit/actions/workflows/ci.yml)
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/ph4mHoa/qbd-agent-kit/blob/main/LICENSE)
 
-[Setup](docs/setup.md) · [Commands](docs/commands.md) · [Skills](skills) · [Safety](docs/safety.md) ·
-[Troubleshooting](docs/troubleshooting.md) · [Compared with other options](docs/comparison.md)
+[Setup](https://github.com/ph4mHoa/qbd-agent-kit/blob/main/docs/setup.md) · [Commands](https://github.com/ph4mHoa/qbd-agent-kit/blob/main/docs/commands.md) · [Skills](https://github.com/ph4mHoa/qbd-agent-kit/tree/main/plugin/skills) · [Safety](https://github.com/ph4mHoa/qbd-agent-kit/blob/main/docs/safety.md) ·
+[Troubleshooting](https://github.com/ph4mHoa/qbd-agent-kit/blob/main/docs/troubleshooting.md) · [Compared with other options](https://github.com/ph4mHoa/qbd-agent-kit/blob/main/docs/comparison.md)
 
-<img src="assets/daily-brief.gif" alt="An agent runs qbd daily-brief on the sample company: cash, money owed and overdue, sales against last month, and what needs attention today">
+<img src="https://raw.githubusercontent.com/ph4mHoa/qbd-agent-kit/main/assets/cash-and-collections.gif" alt="Asked how cash looks for the next five weeks and who to chase first, an AI agent reads the kit's skills, runs six read-only qbd commands on QuickBooks Desktop, and opens two pages qbd draws from the answers: cash week by week, and who owes what">
+
+<sub>A real run, sped up: an agent (Gemini 3.8 Flash in agy) on QuickBooks Desktop Enterprise 24 with a demo company. The clock shows the real time, 2 min 19 s.</sub>
 
 </div>
 
 Read-only until you turn changes on. A change is checked, previewed, saved only after a person says yes, logged, and
-can be undone. Every animation on this page is the real output of `qbd --demo`, the built-in sample company.
+can be undone. The other animations on this page are the real output of `qbd --demo`, the built-in sample company.
 
 ## Problems it solves
+
+### "What needs attention today?"
+
+`qbd daily-brief` gives cash, money owed and how late, bills due soon, sales against last month, low stock, and what
+needs attention today.
+
+<img src="https://raw.githubusercontent.com/ph4mHoa/qbd-agent-kit/main/assets/daily-brief.gif" alt="An agent runs qbd daily-brief on the sample company: cash, money owed and overdue, sales against last month, and what needs attention today">
 
 ### "Which payments make up this bank deposit?"
 
 The bank shows one deposit of 3,231.95 and Undeposited Funds holds eight payments. `qbd deposits` finds the ones
 that add up to it, ready to record as one deposit.
 
-<img src="assets/deposits.gif" alt="qbd deposits finds the two payments that make up a bank deposit of 3,231.95">
+<img src="https://raw.githubusercontent.com/ph4mHoa/qbd-agent-kit/main/assets/deposits.gif" alt="qbd deposits finds the two payments that make up a bank deposit of 3,231.95">
 
 ### "A customer paid two invoices with one check."
 
 `qbd match-payment` reads the memo and the open invoices. The payment is then drafted, shown to you, and saved only
 after your yes.
 
-<img src="assets/match-payment.gif" alt="qbd match-payment finds the invoices a check pays; the payment is drafted, approved and committed">
+<img src="https://raw.githubusercontent.com/ph4mHoa/qbd-agent-kit/main/assets/match-payment.gif" alt="qbd match-payment finds the invoices a check pays; the payment is drafted, approved and committed">
 
 ### "Why is this item below zero?"
 
 Negative stock makes the cost of goods sold wrong. `qbd stock-history` finds each sale that took the item below
 zero and the purchase that brought it back, with the fix.
 
-<img src="assets/stock-history.gif" alt="qbd stock-history shows the invoices that took an item below zero and the bill that brought it back">
+<img src="https://raw.githubusercontent.com/ph4mHoa/qbd-agent-kit/main/assets/stock-history.gif" alt="qbd stock-history shows the invoices that took an item below zero and the bill that brought it back">
 
 ### "Are the books ready to close the month?"
 
 `qbd health-check` runs the checks an accountant runs before closing: uncategorized amounts, undeposited payments,
 late invoices, unapplied credits, negative stock and dates typed wrong, each with its fix.
 
-<img src="assets/health-check.gif" alt="qbd health-check finds seven things to fix before closing September">
+<img src="https://raw.githubusercontent.com/ph4mHoa/qbd-agent-kit/main/assets/health-check.gif" alt="qbd health-check finds seven things to fix before closing September">
 
 ### "Which checks never cleared the bank?"
 
 `qbd uncleared` lists bank items that never cleared, oldest first, and the ones stuck in a reconciliation that was
 never finished.
 
-<img src="assets/uncleared.gif" alt="qbd uncleared finds a check not cleared in 41 days and a payment stuck in an unfinished reconciliation">
+<img src="https://raw.githubusercontent.com/ph4mHoa/qbd-agent-kit/main/assets/uncleared.gif" alt="qbd uncleared finds a check not cleared in 41 days and a payment stuck in an unfinished reconciliation">
 
 ## What you can ask
 
@@ -85,6 +94,7 @@ never finished.
 | *"Top 10 customers this year?"* | `qbd report sales_by_customer` | QuickBooks' own report, so the totals match QuickBooks |
 | *"I'm about to rebuild the company file. Will anything change?"* | `qbd snapshot` | Every account's balance and the count of each record type, saved before and compared after, with what moved |
 | *"The store sync stopped last night. Why?"* | `qbd web-connector` | Each app that syncs through the QuickBooks Web Connector: when it last ran, its last error, what that error means and the fix |
+| *"What did you do today?"* | `qbd activity --open` | A page in the web browser: each request and how long it took, the records read, what went wrong, and each change saved with its reason |
 
 ## Why this kit
 
@@ -97,6 +107,11 @@ never finished.
 - **Safe by default.** Read-only until the owner turns changes on. A change is checked (closing date, amount limit,
   names that exist, text too long for its field, duplicates, lines that would be dropped, a document entered before), previewed with what
   QuickBooks will fill in, saved with a one-time token after a person approves, logged, and can be undone.
+- **Answers drawn, not just told.** With `--open`, `qbd cash-position` and `qbd receivables` also open a page in the
+  web browser: cash week by week with money in and out, and who owes what and how late. It is drawn from QuickBooks'
+  numbers, so the agent only has to say what they mean.
+- **You can see what it did.** `qbd activity --open` opens a page in the web browser: every request the agent made,
+  how long it took, how many records came back, what went wrong, and every change saved with the reason given.
 - **Try it in two minutes.** A built-in sample company with planted problems runs on any computer.
 
 ## Quick start
@@ -111,12 +126,12 @@ qbd daily-brief --pretty
 ```
 
 No Python on that PC? The Windows download in [Releases](https://github.com/ph4mHoa/qbd-agent-kit/releases/latest)
-has Python, pywin32 and the kit in one folder: unzip it to `C:\qbd` and run `C:\qbd\qbd.cmd` where this page says
-`qbd`.
+has Python, pywin32 and the kit in one folder, and its `add-ons.cmd` adds the Activity Monitor: unzip it to `C:\qbd`
+and run `C:\qbd\qbd.cmd` where this page says `qbd`.
 
 `qbd authorize` needs QuickBooks open with the company file, logged in as Admin. QuickBooks asks whether to let
 *QBD Agent Kit* in: choose **Yes, whenever my QuickBooks company file is open**
-([details](docs/setup.md#3-give-quickbooks-permission)).
+([details](https://github.com/ph4mHoa/qbd-agent-kit/blob/main/docs/setup.md#3-give-quickbooks-permission)).
 
 Then give your agent the commands:
 
@@ -133,30 +148,37 @@ qbd daily-brief --demo --pretty
 
 ## What's inside
 
-**42 commands** ([reference](docs/commands.md)); `qbd help <command>` prints the same text.
+**44 commands** ([reference](https://github.com/ph4mHoa/qbd-agent-kit/blob/main/docs/commands.md)); `qbd help <command>` prints the same text.
 
 - Workflows: `daily-brief`, `trace`, `receivables`, `match-payment`, `deposits`, `payables`, `coding`,
   `cash-position`, `reorder`, `stock`, `backorders`, `purchasing`, `stock-history`, `1099`, `uncleared`,
   `reconcile-check`, `price-check`, `sales-tax-check`, `currency`, `find-duplicates`, `health-check`, `compare-periods`
 - Records: `status`, `profile`, `search`, `export` (to CSV), `count`, `changes`, `snapshot`, `get`, `report`
   (35 named reports and any other report type), `schema`, `raw` (any qbXML query)
-- The QuickBooks PC: `file-health`, `web-connector`
+- The QuickBooks PC: `file-health`, `web-connector`, `activity` (a page of what the agent did), `addons`
+  (programs a person adds, such as the Activity Monitor)
 - Changes, only when turned on: `draft`, `import` (from CSV), `commit`, `undo`, `log`
 - Setup: `doctor`, `authorize`
 
-**9 agent skills** ([skills/](skills)), plain `SKILL.md` files that teach the agent each routine:
+**The Activity Monitor**, an [add-on](https://github.com/ph4mHoa/qbd-agent-kit/blob/main/docs/addons.md) (`qbd addons install activity-monitor`, or `add-ons.cmd` in
+the Windows download): a tray app for the person who checks the AI's work. It shows what each assistant does in
+QuickBooks right now, the line waiting for QuickBooks, what went wrong and what changed, and lets that person approve
+or reject a prepared change, undo a saved one, and stop a long read after its current step
+([setup](https://github.com/ph4mHoa/qbd-agent-kit/blob/main/docs/setup.md#7-watch-and-approve-in-the-activity-monitor), [safety](https://github.com/ph4mHoa/qbd-agent-kit/blob/main/docs/safety.md#the-activity-monitor)).
+
+**9 agent skills** ([plugin/skills/](https://github.com/ph4mHoa/qbd-agent-kit/tree/main/plugin/skills)), plain `SKILL.md` files that teach the agent each routine:
 
 | Skill | For |
 | --- | --- |
-| [quickbooks-desktop](skills/quickbooks-desktop/SKILL.md) | The basics: which command to use, bounded requests, the draft and approve rules |
-| [daily-finance-brief](skills/daily-finance-brief/SKILL.md) | A short morning summary with today's actions |
-| [ar-collections](skills/ar-collections/SKILL.md) | Who to chase, and reminder emails by stage |
-| [bills-and-cash](skills/bills-and-cash/SKILL.md) | A payment run checked against cash |
-| [month-end-check](skills/month-end-check/SKILL.md) | What to fix before closing a month |
-| [inventory-reorder](skills/inventory-reorder/SKILL.md) | Reorder quantities and purchase orders per vendor |
-| [ask-the-books](skills/ask-the-books/SKILL.md) | Picking the right report for any question |
-| [enter-bill-from-document](skills/enter-bill-from-document/SKILL.md) | A vendor invoice into a bill, checked and approved |
-| [support-case](skills/support-case/SKILL.md) | What is wrong with QuickBooks, the file or a sync app, who fixes it, and the note to send them |
+| [quickbooks-desktop](https://github.com/ph4mHoa/qbd-agent-kit/blob/main/plugin/skills/quickbooks-desktop/SKILL.md) | The basics: which command to use, bounded requests, the draft and approve rules |
+| [daily-finance-brief](https://github.com/ph4mHoa/qbd-agent-kit/blob/main/plugin/skills/daily-finance-brief/SKILL.md) | A short morning summary with today's actions |
+| [ar-collections](https://github.com/ph4mHoa/qbd-agent-kit/blob/main/plugin/skills/ar-collections/SKILL.md) | Who to chase, and reminder emails by stage |
+| [bills-and-cash](https://github.com/ph4mHoa/qbd-agent-kit/blob/main/plugin/skills/bills-and-cash/SKILL.md) | A payment run checked against cash |
+| [month-end-check](https://github.com/ph4mHoa/qbd-agent-kit/blob/main/plugin/skills/month-end-check/SKILL.md) | What to fix before closing a month |
+| [inventory-reorder](https://github.com/ph4mHoa/qbd-agent-kit/blob/main/plugin/skills/inventory-reorder/SKILL.md) | Reorder quantities and purchase orders per vendor |
+| [ask-the-books](https://github.com/ph4mHoa/qbd-agent-kit/blob/main/plugin/skills/ask-the-books/SKILL.md) | Picking the right report for any question |
+| [enter-bill-from-document](https://github.com/ph4mHoa/qbd-agent-kit/blob/main/plugin/skills/enter-bill-from-document/SKILL.md) | A vendor invoice into a bill, checked and approved |
+| [support-case](https://github.com/ph4mHoa/qbd-agent-kit/blob/main/plugin/skills/support-case/SKILL.md) | What is wrong with QuickBooks, the file or a sync app, who fixes it, and the note to send them |
 
 ## How it works
 
@@ -164,7 +186,7 @@ qbd daily-brief --demo --pretty
 AI agent (Claude Code, Codex, Cursor, a script...)
    │  runs qbd <command>, reads one line of JSON
    ▼
-qbd (Python): commands, checks, drafts, write log, personal-data masking
+qbd (Python): commands, checks, drafts, write log, call log, personal-data masking
    │  COM: QBXMLRP2.RequestProcessor, through pywin32
    ▼
 QuickBooks SDK  ──►  QuickBooks Desktop and the company file
@@ -173,7 +195,7 @@ QuickBooks SDK  ──►  QuickBooks Desktop and the company file
 Requests are built from the qbXML 16.0 schema, so elements always go in the order QuickBooks requires, and `qbd`
 uses the newest qbXML version QuickBooks supports, up to 16.0. QuickBooks answers one request at a time, so commands
 take turns. Nothing leaves the PC except what the AI app itself sends to its model; see
-[where your data goes](docs/setup.md#where-your-data-goes).
+[where your data goes](https://github.com/ph4mHoa/qbd-agent-kit/blob/main/docs/setup.md#where-your-data-goes).
 
 ## Settings
 
@@ -187,12 +209,12 @@ Settings are environment variables, and all are optional. The ones most people n
 | `QBD_MAX_AMOUNT` | `10000` | A change whose total is above this is refused; the total counts the prices QuickBooks fills in |
 | `QBD_COMPANY_FILE` | the file open in QuickBooks | Pins every command to one company file |
 
-The full list is in [setup](docs/setup.md#settings). These settings prevent mistakes, but an agent that can run any
-command can also change them; [safety](docs/safety.md#settings-are-not-a-lock) explains what actually holds.
+The full list is in [setup](https://github.com/ph4mHoa/qbd-agent-kit/blob/main/docs/setup.md#settings). These settings prevent mistakes, but an agent that can run any
+command can also change them; [safety](https://github.com/ph4mHoa/qbd-agent-kit/blob/main/docs/safety.md#settings-are-not-a-lock) explains what actually holds.
 
 ## Status
 
-Version 0.2.0, an early release, not on PyPI yet.
+Version 0.3.0, an early release, not released yet: the Windows download and PyPI have 0.2.0 until it is.
 
 - Automated tests run every command, check and the change flow against the sample company, on Python 3.10 and 3.15.
 - Run on Windows 10 with QuickBooks Enterprise 24, Canadian edition with multicurrency (qbXML 16.0), and a
@@ -206,7 +228,9 @@ Version 0.2.0, an early release, not on PyPI yet.
 
   Each command used about 75 MB of memory at its peak; the slowest, `health-check`, took about 35 seconds.
 - Tested only on the sample company so far: `trace`, `match-payment`, `deposits`, `coding`, `backorders`,
-  `purchasing`, `1099` (US only), `profile` and `export`.
+  `purchasing`, `1099` (US only), `profile`, `export` and `activity`.
+- The Activity Monitor, installed with `addons` from its zip, run on Windows 10 version 1607 with QuickBooks
+  Enterprise and a demo company: test changes approved, undone, stopped and resumed there.
 
 Report layouts can differ between QuickBooks editions, versions and countries. Please
 [open an issue](https://github.com/ph4mHoa/qbd-agent-kit/issues) if a command misreads yours.
@@ -217,13 +241,17 @@ Report layouts can differ between QuickBooks editions, versions and countries. P
 python -m pip install -e .
 python -m unittest discover -s tests
 python scripts/gen-docs.py      # rewrite docs/commands.md after changing a command
-python scripts/make-demo-gifs.py  # render assets/*.gif from the sample company (needs Pillow)
+python scripts/make-demo-gifs.py  # render the qbd --demo GIFs in assets/ from the sample company (needs Pillow)
 qbd health-check --demo --pretty
 ```
 
 `python scripts/build-windows-zip.py <python embeddable zip> <pywin32 wheel>` builds the Windows download: one
 folder with Python, pywin32 and the kit, started with `qbd.cmd`, so nothing has to be installed on the QuickBooks
-PC. The script's header says which files to download.
+PC. `python scripts/build-addon.py addons/activity-monitor <wxPython wheel>` builds the Activity Monitor's zip, with
+only the part of wxPython it uses and its licence, and writes the zip's address and SHA-256 into qbd's catalog. Each
+script's header says which files to download. The monitor's tests run with
+`PYTHONPATH=src:addons/activity-monitor python -m unittest discover -s addons/activity-monitor/tests` (the window's
+need wxPython).
 
 | Path | What |
 | --- | --- |
@@ -232,13 +260,16 @@ PC. The script's header says which files to download.
 | `src/qbd_agent_kit/qbxml/` | qbXML builder and parser; the schema is generated from the SDK's XSD |
 | `src/qbd_agent_kit/qb/` | QuickBooks client, record catalog, dates |
 | `src/qbd_agent_kit/tools/` | The commands |
-| `src/qbd_agent_kit/safety/` | Write log and personal-data masking |
+| `src/qbd_agent_kit/safety/` | Write log, call log, live status and personal-data masking |
+| `src/qbd_agent_kit/addons/` | Add-ons: the catalog, installing and starting one, the administrator's policy |
+| `src/qbd_agent_kit/api.py` | What an add-on may use of `qbd` |
+| `addons/activity-monitor/` | The Activity Monitor add-on: reading the state folders (`feed.py`), what the pages show (`model.py`), the window (`ui/`) |
 | `src/qbd_agent_kit/demo/` | The sample company |
-| `skills/` | Agent skills |
+| `plugin/` | The Claude Code plugin: its manifest and the agent skills |
 
 Contributions are welcome: bug reports with `qbd doctor` output, report layouts from other QuickBooks editions and
 countries, and new workflows. Please never attach real company data.
 
 ## License
 
-[MIT](LICENSE). QuickBooks is a trademark of Intuit Inc. This project is not affiliated with or endorsed by Intuit.
+[MIT](https://github.com/ph4mHoa/qbd-agent-kit/blob/main/LICENSE). QuickBooks is a trademark of Intuit Inc. This project is not affiliated with or endorsed by Intuit.

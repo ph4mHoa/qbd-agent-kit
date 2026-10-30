@@ -33,6 +33,26 @@ def com_error(e: BaseException) -> QbConnectionError:
     return QbConnectionError(code, str(message or "QuickBooks returned an error").strip())
 
 
+def to_default_desktop() -> Any:
+    """Moves the calling thread to the Default desktop, the one people see and QuickBooks runs on, and returns it; None
+    when the thread is on it already or cannot move. From another desktop the SDK answers "Could not start QuickBooks"
+    while QuickBooks is open, and agy on Windows runs commands on a desktop of its own. A thread can only change desktop
+    before it has a window, and COM gives it one."""
+    try:
+        import win32api
+        import win32con
+        import win32service
+
+        here = win32service.GetThreadDesktop(win32api.GetCurrentThreadId())
+        if win32service.GetUserObjectInformation(here, win32con.UOI_NAME).lower() == "default":
+            return None
+        desktop = win32service.OpenDesktop("Default", 0, False, win32con.MAXIMUM_ALLOWED)
+        desktop.SetThreadDesktop()
+        return desktop
+    except Exception:  # noqa: BLE001 - the SDK then answers as it would have
+        return None
+
+
 class ComTransport:
     kind = "com"
 
@@ -46,9 +66,10 @@ class ComTransport:
         self._jobs: queue.Queue = queue.Queue()
         self._worker: threading.Thread | None = None
         self._session: dict[str, Any] | None = None
-        self._rp: Any = None              # the following three are used on the worker thread only
+        self._rp: Any = None              # the following four are used on the worker thread only
         self._connected = False
         self._ticket: Any = None
+        self._desktop: Any = None         # the desktop the worker moved to, held open while it is there
 
     def open(self) -> dict[str, Any]:
         if self._session is None:
@@ -114,6 +135,7 @@ class ComTransport:
         import pythoncom
         import pywintypes
 
+        self._desktop = to_default_desktop()
         pythoncom.CoInitialize()
         try:
             while True:

@@ -14,6 +14,8 @@ from urllib.parse import urlsplit
 
 from ..jsutil import MISSING, round2
 from ..qb.dates import add_days, days_between
+from .activity import activity
+from .addons import addons
 from .args import Arg
 from .common import Ctx, tool
 
@@ -450,4 +452,4 @@ def web_connector(ctx: Ctx, a: dict) -> dict:
     }
 
 
-FILE_TOOLS = [file_health, web_connector]
+FILE_TOOLS = [file_health, web_connector, activity, addons]

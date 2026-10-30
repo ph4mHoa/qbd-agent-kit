@@ -32,4 +32,4 @@ qbd = "qbd_agent_kit.cli:main"
 version = { attr = "qbd_agent_kit.__version__" }
 
 [tool.setuptools.package-data]
-qbd_agent_kit = ["qbxml/schema.json"]
+qbd_agent_kit = ["qbxml/schema.json", "addons/catalog.json"]

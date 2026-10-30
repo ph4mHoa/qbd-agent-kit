@@ -54,7 +54,7 @@ access, no bulk delete and no e-commerce sync.
 | Read-only mode | Conductor, Desktop Accounting API, Kipper | The default; changes only with `QBD_ALLOW_WRITES=true` |
 | Confirmation before writes, no double writes | Desktop Accounting API | Draft, approval, single-use token, and a source key that refuses a document entered before; an unknown outcome makes the agent search before retrying |
 | Cash flow forecasting, AR aging, management reporting | Kipper | `qbd cash-position`, `qbd receivables`, `qbd daily-brief`, `qbd compare-periods` |
-| Request or audit log | Desktop Accounting API, Kipper | Local write log, `qbd log` and `qbd undo` |
+| Request or audit log | Desktop Accounting API, Kipper | A local call log of every command and write log of every change, shown as a page by `qbd activity`; `qbd log` and `qbd undo` |
 | Import from a spreadsheet | Transaction Pro, SaasAnt, Zed Axis | `qbd import`: every row checked like a draft, one approval, safe to run again |
 | Export to Excel or BI | Transaction Pro, SaasAnt, Zed Axis, QQube, QODBC | `qbd export` to CSV |
 

@@ -1,0 +1,12 @@
+{
+  "id": "activity-monitor",
+  "name": "Activity Monitor",
+  "version": "0.3.0",
+  "publisher": "qbd-agent-kit",
+  "description": "A window and a tray icon that show what AI assistants do in QuickBooks through qbd: what runs now, each session's requests and changes, the changes waiting for your approval and the problems to look at. A small portal in a corner of the screen follows an assistant while it works.",
+  "api": 1,
+  "module": "qbd_activity_monitor",
+  "window": true,
+  "build": "any",
+  "icon": "icon.ico"
+}

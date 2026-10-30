@@ -730,12 +730,18 @@ ALIASES = {
     "time_by_job": "TimeByJobSummary",
 }
 
-# Through the SDK the Audit Trail stopped QuickBooks Enterprise 24 with an unrecoverable error (30674 10300) twice: with
-# a modified-date filter, and on a day with transactions added and deleted. Its default columns answer 510, and its
-# dates pick transaction dates while "Entered/Last Modified" stays at today, so it cannot answer what changed when.
+# Through the SDK the Audit Trail stopped QuickBooks Enterprise 24 with an unrecoverable error (30674 10300) whenever it
+# had rows to send; QuickBooks' own log shows the report built, then an exception in its SDK layer. Its default columns
+# answer 510, and its dates pick transaction dates while "Entered/Last Modified" stays at today.
 AUDIT_TRAIL_OFF = ("The Audit Trail report is not run from here: through the SDK it stopped QuickBooks with an unrecoverable "
                    "error. qbd changes <since> lists what was added, changed or deleted; or open Reports > Accountant & "
                    "Taxes > Audit Trail in QuickBooks.")
+# For every item at once, the Inventory Valuation Summary stopped QuickBooks Enterprise 24 (heap corruption after a
+# 47-second build on a large file). For one item it stays small.
+VALUATION_ONE_ITEM = ("The Inventory Valuation Summary is run from here for one item at a time (give item): for every item "
+                      "at once it stopped QuickBooks with an unrecoverable error. The total value of the stock is the "
+                      "Inventory Asset line of qbd report balance_sheet; or open Reports > Inventory > Inventory Valuation "
+                      "Summary in QuickBooks.")
 
 
 FAMILIES = [
@@ -786,6 +792,8 @@ def run_report(ctx: Ctx, a: dict) -> Report:
     r = resolve_report(a["report"])
     if r["type"] == "AuditTrail":
         raise ToolError(AUDIT_TRAIL_OFF)
+    if r["type"] == "InventoryValuationSummary" and not a["item"]:
+        raise ToolError(VALUATION_ONE_ITEM)
     m = message_model(r["message"])
     body: dict[str, Any] = {r["family"]: r["type"]}
     if a["from"] or a["to"]:

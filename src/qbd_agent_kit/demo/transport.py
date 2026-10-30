@@ -417,14 +417,17 @@ class DemoTransport:
         def party(t: Rec) -> str:
             return text(get(nz(get(t, "CustomerRef"), get(t, "VendorRef")), "FullName"))
 
+        def amount(t: Rec) -> float:
+            return t["TotalAmount"] if so else -t["TotalAmount"]  # QuickBooks shows purchase orders as negative amounts
+
         rows: list[dict] = []
         for name in sorted(dict.fromkeys(party(t) for t in open_)):
             own = [t for t in open_ if party(t) == name]
             rows.append({"kind": "text", "label": name})
             for t in own:
-                rows.append({"kind": "data", "label": "", "values": ["Sales Order" if so else "Purchase Order", text(get(t, "TxnDate")), text(get(t, "RefNumber")), name, t["TotalAmount"], text(get(t, "TxnID"))]})
-            rows.append({"kind": "subtotal", "label": f"Total {name}", "values": ["", "", "", "", money(add_up(t["TotalAmount"] for t in own)), ""]})
-        rows.append({"kind": "total", "label": "TOTAL", "values": ["", "", "", "", money(add_up(t["TotalAmount"] for t in open_)), ""]})
+                rows.append({"kind": "data", "label": "", "values": ["Sales Order" if so else "Purchase Order", text(get(t, "TxnDate")), text(get(t, "RefNumber")), name, amount(t), text(get(t, "TxnID"))]})
+            rows.append({"kind": "subtotal", "label": f"Total {name}", "values": ["", "", "", "", money(add_up(amount(t) for t in own)), ""]})
+        rows.append({"kind": "total", "label": "TOTAL", "values": ["", "", "", "", money(add_up(amount(t) for t in open_)), ""]})
         cols = [("", "Blank", "STRTYPE"), ("Type", "TxnType", "STRTYPE"), ("Date", "Date", "DATETYPE"), ("Num", "RefNumber", "STRTYPE"), ("Name", "Name", "STRTYPE"), ("Amount", "Amount", "AMTTYPE"), ("", "TxnID", "STRTYPE")]
         return self._report_xml("Open Sales Orders by Customer" if so else "Open Purchase Orders", rng, None, cols, rows)
 

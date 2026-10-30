@@ -21,6 +21,10 @@ same file, so every request should be as small as it can be.
   `qbd help <command>`). Exit code 3: a person must act at the PC; show them the hint and wait. Exit code 1: anything
   else. Retry only when `retryable` is true, and at most twice.
 - `--demo` runs any command against a built-in sample company, for trying things without QuickBooks.
+- Name yourself on every command, so the person can follow your work in the Activity Monitor: `--agent` with your
+  name and app, `--session` with a short ID you make up once per conversation, and `--session-title` with what the
+  person asked, in a few words and without personal data. For example
+  `qbd --agent "Claude (Claude Code)" --session cc-7f3c --session-title "Deposit this week's cheques" deposits`.
 
 ## Start
 
@@ -58,6 +62,7 @@ same file, so every request should be as small as it can be.
 | What this company file uses (features, list sizes, custom fields) | `qbd profile` |
 | The file's size, backups and QuickBooks' own errors | `qbd file-health` |
 | Why a store, CRM or other app that syncs through the Web Connector stopped | `qbd web-connector` |
+| What you did, for the person to check | `qbd activity --open` |
 | Something the commands above do not cover | `qbd schema <request>`, then `qbd raw <request>` (queries only) |
 
 ## Rules
@@ -78,6 +83,9 @@ same file, so every request should be as small as it can be.
 - **Money:** show amounts with two decimals and the company's currency; say "about" for estimates such as the
   cash forecast.
 - **Personal data:** ID and card numbers are masked. Do not try to unmask them.
+- **Show your work.** When the person asks what you did, and at the end of a session that changed records, run
+  `qbd activity --open`: it opens a page in their web browser with every command you ran and every change saved,
+  taken from the logs rather than from your memory.
 
 ## Changes
 

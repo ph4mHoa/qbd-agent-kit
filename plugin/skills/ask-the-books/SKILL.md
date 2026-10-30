@@ -16,7 +16,7 @@ description: Answer free-form questions about a business from its QuickBooks Des
 | Spending by vendor | `qbd report expenses_by_vendor` |
 | What we own and owe on a date | `qbd report balance_sheet --to <date>` |
 | Who owes us / what we owe | `qbd receivables` / `qbd payables`, or the `ar_aging` / `ap_aging` reports |
-| Stock value | `qbd report inventory_valuation` |
+| Stock value | The Inventory Asset line of `qbd report balance_sheet --to <date>`; for one item, `qbd report inventory_valuation --item "<item>"` |
 | Why an item's stock or cost is off | `qbd stock-history "<item>"` |
 | Sales tax due | `qbd report sales_tax_liability` |
 | One customer's history | `qbd search <type> --party "<customer>"` with dates, then `qbd get` for detail |

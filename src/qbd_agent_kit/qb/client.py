@@ -2,6 +2,8 @@
 status errors into exceptions."""
 from __future__ import annotations
 
+import re
+import time
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
@@ -13,6 +15,7 @@ from ..qbxml.schema import message_model, supports_iterator
 
 SCHEMA_VERSION = "16.0"  # the schema this kit is generated from; newer QuickBooks still gets requests in this version
 PROBE_VERSION = "13.0"   # qbXML 13.0 = QuickBooks 2014; every supported QuickBooks Desktop understands it
+REQUEST_NAME = re.compile(r"<(?!QBXMLMsgsRq\b)(\w+Rq)\b")
 
 
 class Transport(Protocol):
@@ -54,6 +57,36 @@ class QbClient:
         self._host: HostInfo | None = None
         self._session: dict[str, Any] | None = None
         self._next_id = 1
+        self.calls: list[dict[str, Any]] = []  # every envelope sent, for the call log: request, ms, status, items
+        self.watch: Any = None                 # the command's live file (safety.live.Live), told about each request
+        self._paging: dict[str, Any] = {}      # where a paged read is, for the live file
+
+    @property
+    def company_file(self) -> str | None:
+        """The company file QuickBooks opened for this command, once it has."""
+        return self._session.get("companyFile") if self._session else None
+
+    @property
+    def host(self) -> HostInfo | None:
+        return self._host
+
+    def _send(self, qbxml: str, paging: dict[str, Any] | None = None) -> str:
+        entry: dict[str, Any] = {"request": ",".join(REQUEST_NAME.findall(qbxml))}
+        if self.watch is not None:
+            self.watch.step(entry["request"], self._paging if paging is None else paging)  # stops here when a person asked the monitor to
+        self.calls.append(entry)
+        start = time.monotonic()
+        try:
+            answer = self.transport.process(qbxml)
+        finally:
+            entry["ms"] = round((time.monotonic() - start) * 1000)
+        entry["bytes"] = len(answer)
+        return answer
+
+    def _note(self, body: dict, status: Any, items: int, **extra: Any) -> None:
+        """What the last request asked for (its element names, not their values) and how many records came back."""
+        if self.calls:
+            self.calls[-1].update(elements=[k for k in body if k != "MaxReturned"], status=status, items=items, **extra)
 
     def host_info(self) -> HostInfo:
         """Product, version and the qbXML version used for every request. Asked once per session."""
@@ -61,7 +94,9 @@ class QbClient:
         if self._host and self._session and self._session.get("companyFile") == session.get("companyFile"):
             return self._host
         self._session = session
-        raw = self.transport.process(envelope([build_request("HostQueryRq", {}, {"requestID": "host"})], PROBE_VERSION))
+        if self.watch is not None:
+            self.watch.connected(session.get("companyFile", ""))
+        raw = self._send(envelope([build_request("HostQueryRq", {}, {"requestID": "host"})], PROBE_VERSION), {})
         answers = parse_responses(raw)
         rs = answers[0] if answers else None
         if rs is None or rs.status_severity == "Error":
@@ -83,7 +118,7 @@ class QbClient:
     def raw(self, requests: list[str], on_error: str = "stopOnError") -> str:
         """Sends request elements in one envelope and returns QuickBooks' raw XML answer."""
         version = self.host_info().qbxml_version
-        return self.transport.process(envelope(requests, version, on_error))
+        return self._send(envelope(requests, version, on_error))
 
     def request(self, message: str, body: dict, attrs: dict[str, Any] | None = None) -> QbResponse:
         """One request; raises QbStatusError when QuickBooks answers with an error status."""
@@ -93,6 +128,7 @@ class QbClient:
         rs = next((r for r in parse_responses(answer) if r.request_id == request_id), None)
         if rs is None:
             raise QbStatusError(-1, f"QuickBooks sent no answer to {message}")
+        self._note(body, rs.status_code, sum(len(v) if isinstance(v, list) else 1 for k, v in rs.body.items() if k.endswith("Ret")))
         if rs.status_severity == "Error":
             raise QbStatusError(rs.status_code, rs.status_message)
         return rs
@@ -113,16 +149,25 @@ class QbClient:
         rows: list[dict] = []
         iterator_id: str | None = None
         remaining: float = 0
-        while True:
-            attrs = {"iterator": "Continue", "iteratorID": iterator_id} if iterator_id else {"iterator": "Start"}
-            rs = self.request(message, {**body, "MaxReturned": min(page_size, limit - len(rows))}, attrs)
-            if rs.status_severity == "Warn":
-                warnings.append(rs.status_message)
-            rows.extend(rets_of(rs))
-            iterator_id = rs.attrs.get("iteratorID")
-            remaining = to_number(rs.attrs.get("iteratorRemainingCount", "0"))
-            if not (remaining > 0 and len(rows) < limit and iterator_id):
-                break
+        page = 0
+        try:
+            while True:
+                attrs = {"iterator": "Continue", "iteratorID": iterator_id} if iterator_id else {"iterator": "Start"}
+                page += 1
+                # QuickBooks says how many records are left after each page, so the monitor can show real progress.
+                self._paging = {"page": page, "page_size": page_size, "read": len(rows), "cap": limit, **({"left": int(remaining)} if page > 1 else {})}
+                rs = self.request(message, {**body, "MaxReturned": min(page_size, limit - len(rows))}, attrs)
+                if rs.status_severity == "Warn":
+                    warnings.append(rs.status_message)
+                rows.extend(rets_of(rs))
+                iterator_id = rs.attrs.get("iteratorID")
+                remaining = to_number(rs.attrs.get("iteratorRemainingCount", "0"))
+                if self.watch is not None:
+                    self.watch.answered(read=len(rows), left=int(remaining) if finite(remaining) else 0)
+                if not (remaining > 0 and len(rows) < limit and iterator_id):
+                    break
+        finally:
+            self._paging = {}
         if remaining > 0 and iterator_id:
             # Free the iterator inside QuickBooks instead of waiting for the session to end.
             try:
@@ -134,11 +179,17 @@ class QbClient:
     def report(self, message: str, body: dict) -> Report:
         request_id = str(self._next_id)
         self._next_id += 1
-        answer = self.raw([build_request(message, body, {"requestID": request_id})])
+        report_type = next((v for k, v in body.items() if k.endswith("ReportType")), MISSING)
+        self._paging = {"report": report_type} if isinstance(report_type, str) else {}
+        try:
+            answer = self.raw([build_request(message, body, {"requestID": request_id})])
+        finally:
+            self._paging = {}
         rs = next((r for r in parse_responses(answer) if r.request_id == request_id), None)
+        report = next((r for r in parse_reports(answer) if r.request_id == request_id), None)
+        self._note(body, rs.status_code if rs else -1, len(report.rows) if report else 0, report=report_type)
         if rs is not None and rs.status_severity == "Error":
             raise QbStatusError(rs.status_code, rs.status_message)
-        report = next((r for r in parse_reports(answer) if r.request_id == request_id), None)
         if report is None:
             raise QbStatusError(rs.status_code if rs else -1, (rs.status_message if rs else "") or f"QuickBooks sent no {message} report")
         return report
